@@ -9,6 +9,10 @@
 #include "ADBMS6830_commands.h"
 #include "ADBMS6830_driver.h"
 
+#ifndef ADBMS_ENABLE_LOGGING
+#define ADBMS_ENABLE_LOGGING 0
+#endif
+
 namespace adbms6830 {
 	enum class BMSStatus {
 		kOk = 0,
@@ -19,7 +23,7 @@ namespace adbms6830 {
 
 	class BMSInterface {
 	public:
-		static constexpr std::size_t kNumModules = 1;
+		static constexpr std::size_t kNumModules = 9;
 		static constexpr std::size_t kCellsPerModule = 12;
 		static constexpr std::size_t kMaxBalanceCells = 16;
 		static constexpr std::size_t kCellsPerCommandGroup = 3;
@@ -62,6 +66,8 @@ namespace adbms6830 {
 		}
 
 		void begin() { driver_.begin(); }
+		void setModuleCount(std::size_t moduleCount) { moduleCount_ = (moduleCount == 0 || moduleCount > kNumModules) ? 1 : moduleCount; }
+		std::size_t moduleCount() const { return moduleCount_; }
 
 		BMSStatus readAllCellVoltages() {
 			clearModuleData();
@@ -77,13 +83,14 @@ namespace adbms6830 {
 
 			std::array<uint8_t, kNumModules * kResponseBytesPerModule> rxBuffer{};
 			bool pecFailure = false;
+			const std::size_t rxLength = moduleCount_ * kResponseBytesPerModule;
 
 			for (std::size_t groupIndex = 0; groupIndex < kCellCommands.size(); ++groupIndex) {
 				uint16_t command = kCellCommands[groupIndex];
-				driver_.sendCommandWithResponse(command, rxBuffer.data(), rxBuffer.size());
-				logSpiResponse(command, rxBuffer.data(), rxBuffer.size());
+				driver_.sendCommandWithResponse(command, rxBuffer.data(), rxLength);
+				logSpiResponse(command, rxBuffer.data(), rxLength);
 
-				for (std::size_t moduleIndex = 0; moduleIndex < kNumModules; ++moduleIndex) {
+				for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
 					uint8_t* moduleBytes = rxBuffer.data() + moduleIndex * kResponseBytesPerModule;
 					uint8_t* pecBytes = moduleBytes + kDataBytes;
 
@@ -111,7 +118,7 @@ namespace adbms6830 {
 		}
 
 		BMSStatus balanceModule(std::size_t moduleIndex, uint16_t cellMask) {
-			if (moduleIndex >= kNumModules) {
+			if (moduleIndex >= moduleCount_) {
 				return BMSStatus::kError;
 			}
 
@@ -122,7 +129,7 @@ namespace adbms6830 {
 		}
 
 		BMSStatus setBalanceCell(std::size_t moduleIndex, std::size_t cellIndex, bool enable) {
-			if (moduleIndex >= kNumModules || cellIndex >= kCellsPerModule || cellIndex >= kMaxBalanceCells) {
+			if (moduleIndex >= moduleCount_ || cellIndex >= kCellsPerModule || cellIndex >= kMaxBalanceCells) {
 				return BMSStatus::kError;
 			}
 
@@ -137,7 +144,7 @@ namespace adbms6830 {
 		}
 
 		BMSStatus balancingOff() {
-			for (std::size_t moduleIndex = 0; moduleIndex < kNumModules; ++moduleIndex) {
+			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
 				balanceMasks_[moduleIndex] = 0;
 				modules_[moduleIndex].balanceMask = 0;
 			}
@@ -145,7 +152,7 @@ namespace adbms6830 {
 		}
 
 		BMSStatus readPwmRegisters(std::size_t moduleIndex, PwmRegisters& pwmRegisters) {
-			if (moduleIndex >= kNumModules) {
+			if (moduleIndex >= moduleCount_) {
 				return BMSStatus::kError;
 			}
 
@@ -154,9 +161,10 @@ namespace adbms6830 {
 			constexpr std::size_t kResponseBytesPerModule = kDataBytes + kPecBytes;
 			std::array<uint8_t, kNumModules * kResponseBytesPerModule> rxBuffer{};
 			bool pecFailure = false;
+			const std::size_t rxLength = moduleCount_ * kResponseBytesPerModule;
 
-			driver_.sendCommandWithResponse(CMD_RDPWMA, rxBuffer.data(), rxBuffer.size());
-			for (std::size_t module = 0; module < kNumModules; ++module) {
+			driver_.sendCommandWithResponse(CMD_RDPWMA, rxBuffer.data(), rxLength);
+			for (std::size_t module = 0; module < moduleCount_; ++module) {
 				uint8_t* moduleBytes = rxBuffer.data() + module * kResponseBytesPerModule;
 				uint8_t* pecBytes = moduleBytes + kDataBytes;
 				if (!ADBMS6830Driver::validatePEC10(moduleBytes, kDataBytes, pecBytes)) {
@@ -170,8 +178,8 @@ namespace adbms6830 {
 				}
 			}
 
-			driver_.sendCommandWithResponse(CMD_RDPWMB, rxBuffer.data(), rxBuffer.size());
-			for (std::size_t module = 0; module < kNumModules; ++module) {
+			driver_.sendCommandWithResponse(CMD_RDPWMB, rxBuffer.data(), rxLength);
+			for (std::size_t module = 0; module < moduleCount_; ++module) {
 				uint8_t* moduleBytes = rxBuffer.data() + module * kResponseBytesPerModule;
 				uint8_t* pecBytes = moduleBytes + kDataBytes;
 				if (!ADBMS6830Driver::validatePEC10(moduleBytes, kDataBytes, pecBytes)) {
@@ -211,13 +219,14 @@ namespace adbms6830 {
 
 			std::array<uint8_t, kNumModules * kResponseBytesPerModule> rxBuffer{};
 			bool pecFailure = false;
+			const std::size_t rxLength = moduleCount_ * kResponseBytesPerModule;
 
 			for (std::size_t groupIndex = 0; groupIndex < kAuxCommands.size(); ++groupIndex) {
 				uint16_t command = kAuxCommands[groupIndex];
-				driver_.sendCommandWithResponse(command, rxBuffer.data(), rxBuffer.size());
-				logSpiResponse(command, rxBuffer.data(), rxBuffer.size());
+				driver_.sendCommandWithResponse(command, rxBuffer.data(), rxLength);
+				logSpiResponse(command, rxBuffer.data(), rxLength);
 
-				for (std::size_t moduleIndex = 0; moduleIndex < kNumModules; ++moduleIndex) {
+				for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
 					uint8_t* moduleBytes = rxBuffer.data() + moduleIndex * kResponseBytesPerModule;
 					uint8_t* pecBytes = moduleBytes + kDataBytes;
 
@@ -269,13 +278,14 @@ namespace adbms6830 {
 		ADBMS6830Driver& driver_;
 		std::array<ModuleData, kNumModules> modules_{};
 		std::array<uint16_t, kNumModules> balanceMasks_{};
+		std::size_t moduleCount_ = 1;
 
 		static constexpr uint16_t validCellMask() {
 			return (kCellsPerModule >= 16) ? 0xFFFFu : static_cast<uint16_t>((1u << kCellsPerModule) - 1u);
 		}
 
 		bool anyBalancingActive() const {
-			for (std::size_t moduleIndex = 0; moduleIndex < kNumModules; ++moduleIndex) {
+			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
 				if ((balanceMasks_[moduleIndex] & validCellMask()) != 0u) {
 					return true;
 				}
@@ -354,9 +364,9 @@ namespace adbms6830 {
 			constexpr std::size_t kPayloadBytesPerModule = kDataBytes + kPecBytes;
 
 			std::array<uint8_t, kNumModules * kPayloadBytesPerModule> payload{};
-			for (std::size_t moduleIndex = 0; moduleIndex < kNumModules; ++moduleIndex) {
+			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
 				// Daisy-chain writes are transmitted as device N ... device 1.
-				const std::size_t txModuleIndex = (kNumModules - 1u) - moduleIndex;
+				const std::size_t txModuleIndex = (moduleCount_ - 1u) - moduleIndex;
 				uint8_t* modulePayload = payload.data() + txModuleIndex * kPayloadBytesPerModule;
 				std::array<uint8_t, kDataBytes> dataBytes{};
 
@@ -375,20 +385,20 @@ namespace adbms6830 {
 				modulePayload[kDataBytes + 1u] = static_cast<uint8_t>(dataPec & 0xFFu);
 			}
 
-			driver_.sendWriteCommand(command, payload.data(), payload.size());
+			driver_.sendWriteCommand(command, payload.data(), moduleCount_ * kPayloadBytesPerModule);
 		}
 
 		bool verifyBalanceMask(bool verbose = true) {
 			PwmRegisters readback{};
 			BMSStatus readStatus = readPwmRegisters(0, readback);
 			if (readStatus != BMSStatus::kOk) {
-				if (verbose) {
+				if (verbose && ADBMS_ENABLE_LOGGING) {
 					Serial.println("Balancing write failed: PWM readback returned PEC/error.");
 				}
 				return false;
 			}
 			if ((readback.activeMask & validCellMask()) != (balanceMasks_[0] & validCellMask())) {
-				if (verbose) {
+				if (verbose && ADBMS_ENABLE_LOGGING) {
 					Serial.print("Balancing verify mismatch: wanted 0x");
 					Serial.print(balanceMasks_[0] & validCellMask(), HEX);
 					Serial.print(" read 0x");
@@ -402,7 +412,9 @@ namespace adbms6830 {
 		BMSStatus writeBalancingRegisters() {
 			const bool timerConfigured = setBalanceTimer(anyBalancingActive());
 			if (!timerConfigured) {
+				#if ADBMS_ENABLE_LOGGING
 				Serial.println("Balancing warning: could not update CFGB timer; continuing with PWM write.");
+				#endif
 			}
 
 			writePwmRegisterGroup(CMD_WRPWMA, true);
@@ -413,7 +425,9 @@ namespace adbms6830 {
 
 			verifyBalanceMask(true);
 			if (!timerConfigured) {
+				#if ADBMS_ENABLE_LOGGING
 				Serial.println("Balancing write failed after timer warning: PWM write also not accepted.");
+				#endif
 			}
 			return BMSStatus::kError;
 		}
@@ -425,18 +439,21 @@ namespace adbms6830 {
 			constexpr std::size_t kPayloadBytesPerModule = kDataBytes + kPecBytes;
 
 			std::array<uint8_t, kNumModules * kResponseBytesPerModule> rxBuffer{};
-			driver_.sendCommandWithResponse(CMD_RDCFGB, rxBuffer.data(), rxBuffer.size());
+			const std::size_t rxLength = moduleCount_ * kResponseBytesPerModule;
+			driver_.sendCommandWithResponse(CMD_RDCFGB, rxBuffer.data(), rxLength);
 
 			std::array<uint8_t, kNumModules * kPayloadBytesPerModule> payload{};
-			for (std::size_t moduleIndex = 0; moduleIndex < kNumModules; ++moduleIndex) {
+			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
 				const uint8_t* moduleBytes = rxBuffer.data() + moduleIndex * kResponseBytesPerModule;
 				const uint8_t* pecBytes = moduleBytes + kDataBytes;
 				if (!ADBMS6830Driver::validatePEC10(moduleBytes, kDataBytes, pecBytes)) {
+					#if ADBMS_ENABLE_LOGGING
 					Serial.println("CFGB readback PEC check failed while setting balance timer.");
+					#endif
 					return false;
 				}
 
-				const std::size_t txModuleIndex = (kNumModules - 1u) - moduleIndex;
+				const std::size_t txModuleIndex = (moduleCount_ - 1u) - moduleIndex;
 				uint8_t* modulePayload = payload.data() + txModuleIndex * kPayloadBytesPerModule;
 				for (std::size_t i = 0; i < kDataBytes; ++i) {
 					modulePayload[i] = moduleBytes[i];
@@ -458,9 +475,9 @@ namespace adbms6830 {
 			}
 
 			auto cfgbWriteAccepted = [&]() -> bool {
-				driver_.sendWriteCommand(CMD_WRCFGB, payload.data(), payload.size());
-				driver_.sendCommandWithResponse(CMD_RDCFGB, rxBuffer.data(), rxBuffer.size());
-				for (std::size_t moduleIndex = 0; moduleIndex < kNumModules; ++moduleIndex) {
+				driver_.sendWriteCommand(CMD_WRCFGB, payload.data(), moduleCount_ * kPayloadBytesPerModule);
+				driver_.sendCommandWithResponse(CMD_RDCFGB, rxBuffer.data(), rxLength);
+				for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
 					const uint8_t* moduleBytes = rxBuffer.data() + moduleIndex * kResponseBytesPerModule;
 					const uint8_t* pecBytes = moduleBytes + kDataBytes;
 					if (!ADBMS6830Driver::validatePEC10(moduleBytes, kDataBytes, pecBytes)) {
@@ -478,11 +495,14 @@ namespace adbms6830 {
 			if (cfgbWriteAccepted()) {
 				return true;
 			}
+			#if ADBMS_ENABLE_LOGGING
 			Serial.println("CFGB write failed with algorithmic PEC.");
+			#endif
 			return false;
 		}
 
 		static void logSpiResponse(uint16_t command, const uint8_t* buffer, size_t length) {
+			#if ADBMS_ENABLE_LOGGING
 			// Serial.print("SPI CMD 0x");
 			// Serial.print(command, HEX);
 			// Serial.print(" RX:");
@@ -491,10 +511,16 @@ namespace adbms6830 {
 			(void)command;
 			(void)buffer;
 			(void)length;
+			#else
+			(void)command;
+			(void)buffer;
+			(void)length;
+			#endif
 		}
 
 		static void logPecFailure(std::size_t moduleIndex, uint16_t command, const uint8_t* data,
 		                          size_t dataLength, const uint8_t* pec, size_t pecLength) {
+			#if ADBMS_ENABLE_LOGGING
 			Serial.print("PEC failure module ");
 			Serial.print(moduleIndex);
 			Serial.print(" cmd 0x");
@@ -504,20 +530,37 @@ namespace adbms6830 {
 			Serial.print(" PEC:");
 			logHexBytesInline(pec, pecLength);
 			Serial.println();
+			#else
+			(void)moduleIndex;
+			(void)command;
+			(void)data;
+			(void)dataLength;
+			(void)pec;
+			(void)pecLength;
+			#endif
 		}
 
 		static void logHexBytesInline(const uint8_t* data, size_t length) {
+			#if ADBMS_ENABLE_LOGGING
 			for (size_t i = 0; i < length; ++i) {
 				Serial.print(' ');
 				logHexByte(data[i]);
 			}
+			#else
+			(void)data;
+			(void)length;
+			#endif
 		}
 
 		static void logHexByte(uint8_t value) {
+			#if ADBMS_ENABLE_LOGGING
 			if (value < 0x10) {
 				Serial.print('0');
 			}
 			Serial.print(value, HEX);
+			#else
+			(void)value;
+			#endif
 		}
 
 		static float tempCFromOhms(float ohms) {
