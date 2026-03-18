@@ -18,9 +18,10 @@ enum class StatusMode : uint8_t {
 };
 
 struct SystemStatuses {
-	StatusMode bmsStatus = StatusMode::READY;
-	StatusMode voltageStatus = StatusMode::READY;
-	StatusMode tempStatus = StatusMode::READY;
+	StatusMode board = StatusMode::READY;
+	StatusMode voltage = StatusMode::READY;
+	StatusMode temp = StatusMode::READY;
+	StatusMode BMS = StatusMode::READY;
 	std::array<StatusMode, constants::kModuleCount> moduleStatuses;
 
 	SystemStatuses() {
@@ -112,9 +113,9 @@ inline StatusMode combineModuleStatus(StatusMode voltageStatus, StatusMode tempS
 
 template <typename PollData>
 inline void updateStatusesFromBmsData(const PollData& pollData, SystemStatuses& statuses) {
-	statuses.bmsStatus = (pollData.connectedModuleCount > 0) ? StatusMode::GOOD : StatusMode::READY;
-	statuses.voltageStatus = (pollData.connectedModuleCount > 0) ? StatusMode::GOOD : StatusMode::READY;
-	statuses.tempStatus = (pollData.connectedModuleCount > 0) ? StatusMode::GOOD : StatusMode::READY;
+	statuses.board = (pollData.connectedModuleCount > 0) ? StatusMode::GOOD : StatusMode::READY;
+	statuses.voltage = (pollData.connectedModuleCount > 0) ? StatusMode::GOOD : StatusMode::DISCONNECTED;
+	statuses.temp = (pollData.connectedModuleCount > 0) ? StatusMode::GOOD : StatusMode::DISCONNECTED;
 	statuses.moduleStatuses.fill(StatusMode::DISCONNECTED);
 
 	for (std::size_t moduleIndex = 0; moduleIndex < pollData.modules.size(); ++moduleIndex) {
@@ -128,8 +129,18 @@ inline void updateStatusesFromBmsData(const PollData& pollData, SystemStatuses& 
 		const StatusMode moduleStatus = combineModuleStatus(voltageStatus, tempStatus);
 
 		statuses.moduleStatuses[moduleIndex] = moduleStatus;
-		statuses.voltageStatus = combineAggregateStatus(statuses.voltageStatus, voltageStatus);
-		statuses.tempStatus = combineAggregateStatus(statuses.tempStatus, tempStatus);
-		statuses.bmsStatus = combineAggregateStatus(statuses.bmsStatus, moduleStatus);
+		statuses.voltage = combineAggregateStatus(statuses.voltage, voltageStatus);
+		statuses.temp = combineAggregateStatus(statuses.temp, tempStatus);
+	}
+
+	if (pollData.connectedModuleCount < constants::kModuleCount) {
+		statuses.BMS = StatusMode::BAD_DATA;
+	} else if (statuses.voltage == StatusMode::BAD_DATA || statuses.voltage == StatusMode::ERROR ||
+	           statuses.temp == StatusMode::BAD_DATA || statuses.temp == StatusMode::ERROR) {
+		statuses.BMS = StatusMode::ERROR;
+	} else if (statuses.board != StatusMode::GOOD && statuses.board != StatusMode::READY) {
+		statuses.BMS = StatusMode::ERROR;
+	} else {
+		statuses.BMS = StatusMode::GOOD;
 	}
 }

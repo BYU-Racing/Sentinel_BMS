@@ -2,6 +2,7 @@
 
 #include "BMSControl.h"
 #include "CONSTANTS.h"
+#include "JboxIO.h"
 #include "LEDControl.h"
 #include "SystemStatus.h"
 
@@ -10,6 +11,7 @@ namespace {
 	// act mostly as a scheduler. `readBms` owns hardware polling, `ledControl` owns
 	// the strip state, and `gSystemStatuses` is the parsed application snapshot.
 	SystemStatuses gSystemStatuses{};
+	JboxIO jbox;
 	LEDControl ledControl;
 	ReadBMS readBms;
 	uint32_t lastPollMs = 0;
@@ -17,20 +19,19 @@ namespace {
 } // namespace
 
 void setup() {
-	// Serial output is only used for periodic module telemetry, but initialize it early
-	// so any startup diagnostics emitted by the hardware control path are visible.
+	// Serial output is only used for periodic module telemetry
 	Serial.begin(115200);
 
-	// Initialize the BMS interface first so raw data acquisition is ready before the
-	// application starts rendering or interpreting any battery state.
+	// Initialize the BMS interface
 	readBms.begin();
 
-	// Initialize the LED controller after core hardware setup. The controller keeps its
-	// own LED buffer internally, so main only needs to hand it the current status model.
+	// Initialize the junction box IO
+	jbox.init();
+
+	// Initialize the LED controller
 	ledControl.begin();
 
-	// Show the default startup state immediately. This ensures the strip reflects a
-	// known "not yet polled / waiting" condition before the first timed loop iteration.
+	// Show the default startup state immediately on the LEDs
 	ledControl.update(gSystemStatuses);
 }
 
@@ -39,25 +40,32 @@ void loop() {
 
 	// BMS polling runs on its own interval to keep acquisition cadence stable. The raw
 	// poll result is intentionally separate from status derivation so other consumers
-	// could later reuse the same raw snapshot without coupling to LED-specific logic.
+	// could later reuse the same raw snapshot without coupling to critical status logic.
 	if (now - lastPollMs >= constants::kPollIntervalMs) {
 		lastPollMs = now;
 
-		// Step 1: talk to the hardware and refresh the latest raw module data.
+		// TODO read drive and charge enable pin - Not sure how this effects status yet
+
+		// Poll the slave boards, and get the latest readings
 		readBms.pollBMS();
 
-		// Step 2: translate the raw module readings into coarse application statuses that
-		// can be consumed by LEDs, future CAN messaging, logging summaries, or controls.
+		// Parse the readings in to basic statuses
 		updateStatusesFromBmsData(readBms.data(), gSystemStatuses);
 
-		// Step 3: render the current status snapshot to the LED strip.
+		// Set BMS_STATUS_OUTPUT, pull low if everything is good
+		jbox.setStatus(gSystemStatuses.BMS);
+
+		// Render the current statuses to the LED strip
 		ledControl.update(gSystemStatuses);
 	}
 
 	// Logging is intentionally decoupled from polling so serial I/O cannot throttle the
 	// battery sampling rate or the visual status update cadence.
+	// TODO, make logging more interactive
 	if (now - lastLogMs >= constants::kLogIntervalMs) {
 		lastLogMs = now;
 		readBms.logConnectedModules();
 	}
 }
+
+// TODO - add loop2 for logging and not critical functions

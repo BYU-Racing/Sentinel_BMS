@@ -9,9 +9,9 @@ void LEDControl::begin() {
 }
 
 void LEDControl::update(const SystemStatuses& statuses) {
-	leds_[0] = toColor(statuses.bmsStatus);
-	leds_[1] = toColor(statuses.voltageStatus);
-	leds_[2] = toColor(statuses.tempStatus);
+	leds_[0] = toColor(statuses.board);
+	leds_[1] = toColor(statuses.voltage);
+	leds_[2] = toColor(statuses.temp);
 
 	for (std::size_t moduleIndex = 0; moduleIndex < statuses.moduleStatuses.size(); ++moduleIndex) {
 		leds_[moduleIndex + 3] = toColor(statuses.moduleStatuses[moduleIndex]);
