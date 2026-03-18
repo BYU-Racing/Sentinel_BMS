@@ -87,12 +87,43 @@ void ReadBMS::logConnectedModules() const {
 		Serial.print(cellStats.maxValue, 0);
 		Serial.print(" avg=");
 		Serial.print(cellStats.avgValue, 1);
+
+		for (std::size_t cellIndex = 0; cellIndex < module.cellVoltages.size(); ++cellIndex) {
+			Serial.print(" C");
+			Serial.print(cellIndex + 1);
+			Serial.print(": ");
+
+			const uint16_t cellMv = module.cellVoltages[cellIndex];
+			if (cellMv == adbms6830::BMSInterface::kInvalidCellValue) {
+				Serial.print("invalid");
+			} else {
+				Serial.print(cellMv);
+			}
+		}
+		Serial.println();
+
+		Serial.print("module ");
+		Serial.print(moduleIndex + 1);
 		Serial.print(" therm[C] min=");
 		Serial.print(thermStats.minValue, 1);
 		Serial.print(" max=");
 		Serial.print(thermStats.maxValue, 1);
 		Serial.print(" avg=");
-		Serial.println(thermStats.avgValue, 1);
+		Serial.print(thermStats.avgValue, 1);
+
+		for (std::size_t thermIndex = 0; thermIndex < kThermistorsPerModule; ++thermIndex) {
+			Serial.print(" T");
+			Serial.print(thermIndex + 1);
+			Serial.print(": ");
+
+			const float tempC = module.thermistorTempsC[thermIndex];
+			if (isnan(tempC)) {
+				Serial.print("invalid");
+			} else {
+				Serial.print(tempC, 1);
+			}
+		}
+		Serial.println();
 	}
 }
 
