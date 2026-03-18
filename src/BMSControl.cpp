@@ -2,64 +2,37 @@
 
 const SPISettings ReadBMS::kBmsSpiSettings(1000000, MSBFIRST, SPI_MODE0);
 
-ReadBMS::ReadBMS() : bmsDriver_(SPI1, ADBMS_MAIN_CS, kBmsSpiSettings), bmsInterface_(bmsDriver_) {}
+ReadBMS::ReadBMS()
+	: mainBmsDriver_(SPI1, ADBMS_MAIN_CS, kBmsSpiSettings),
+	  auxBmsDriver_(SPI1, ADBMS_AUX_CS, kBmsSpiSettings),
+	  mainBmsInterface_(mainBmsDriver_),
+	  auxBmsInterface_(auxBmsDriver_) {}
 
 void ReadBMS::begin() {
 	configureSpiPins();
-	bmsInterface_.begin();
-	bmsInterface_.setModuleCount(detectedModuleCount_);
+	mainBmsInterface_.begin();
+	auxBmsInterface_.begin();
+	mainBmsInterface_.setModuleCount(detectedMainModuleCount_);
+	auxBmsInterface_.setModuleCount(detectedAuxModuleCount_);
 }
 
 void ReadBMS::pollBMS() {
-	bmsInterface_.setModuleCount(detectedModuleCount_);
-	const adbms6830::BMSStatus cellStatus = bmsInterface_.readAllCellVoltages();
-	const adbms6830::BMSStatus thermStatus = bmsInterface_.readAllThermistors();
-	const bool cellReadUsable = isUsableStatus(cellStatus);
-	const bool thermReadUsable = isUsableStatus(thermStatus);
-	bool missingConfiguredModule = false;
+	const uint32_t now = millis();
+	const ChainPollResult mainPoll = pollChain(mainBmsInterface_, mainModuleStates_, detectedMainModuleCount_);
 
-	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
-		ModuleState& state = moduleStates_[moduleIndex];
-		const auto& module = bmsInterface_.module(moduleIndex);
-		const bool moduleSeen = cellReadUsable &&
-		                        thermReadUsable &&
-		                        module.dataValid &&
-		                        module.thermistorValid &&
-		                        hasAnyValidCell(module) &&
-		                        hasAnyValidThermistor(module);
-
-		if (moduleSeen) {
-			if (state.seenCount < kConnectDebounce) {
-				++state.seenCount;
-			}
-			state.missedCount = 0;
-			if (state.seenCount >= kConnectDebounce) {
-				state.connected = true;
-			}
-			continue;
-		}
-
-		if (moduleIndex < detectedModuleCount_) {
-			missingConfiguredModule = true;
-		}
-
-		if (!cellReadUsable || !thermReadUsable) {
-			continue;
-		}
-
-		state.seenCount = 0;
-		if (state.missedCount < kDisconnectDebounce) {
-			++state.missedCount;
-		}
-		if (state.missedCount >= kDisconnectDebounce) {
-			state.connected = false;
-		}
+	if (mainPoll.missingConfiguredModule || (now - lastMainModuleScanMs_) >= kModuleScanIntervalMs) {
+		detectedMainModuleCount_ = scanModuleCount(mainBmsInterface_);
+		lastMainModuleScanMs_ = now;
 	}
 
-	const uint32_t now = millis();
-	if (missingConfiguredModule || (now - lastModuleScanMs_) >= kModuleScanIntervalMs) {
-		detectedModuleCount_ = scanModuleCount();
-		lastModuleScanMs_ = now;
+	if (mainPoll.connectedModuleCount < kModuleCount) {
+		const ChainPollResult auxPoll = pollChain(auxBmsInterface_, auxModuleStates_, detectedAuxModuleCount_);
+		if (auxPoll.missingConfiguredModule || (now - lastAuxModuleScanMs_) >= kModuleScanIntervalMs) {
+			detectedAuxModuleCount_ = scanModuleCount(auxBmsInterface_);
+			lastAuxModuleScanMs_ = now;
+		}
+	} else {
+		clearChainStates(auxModuleStates_);
 	}
 
 	updatePollData();
@@ -71,11 +44,11 @@ const ReadBMS::PollData& ReadBMS::data() const {
 
 void ReadBMS::logConnectedModules() const {
 	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
-		if (!moduleStates_[moduleIndex].connected) {
+		const ModuleReadings& module = pollData_.modules[moduleIndex];
+		if (!module.connected) {
 			continue;
 		}
 
-		const auto& module = bmsInterface_.module(moduleIndex);
 		const AggregateStats cellStats = cellStatsForModule(module);
 		const AggregateStats thermStats = thermistorStatsForModule(module);
 
@@ -104,7 +77,7 @@ void ReadBMS::logConnectedModules() const {
 
 		Serial.print("module ");
 		Serial.print(moduleIndex + 1);
-		Serial.print(" therm[C] min=");
+		Serial.print(" temp[C] min=");
 		Serial.print(thermStats.minValue, 1);
 		Serial.print(" max=");
 		Serial.print(thermStats.maxValue, 1);
@@ -149,7 +122,7 @@ bool ReadBMS::hasAnyValidThermistor(const adbms6830::BMSInterface::ModuleData& m
 	return false;
 }
 
-ReadBMS::AggregateStats ReadBMS::cellStatsForModule(const adbms6830::BMSInterface::ModuleData& module) {
+ReadBMS::AggregateStats ReadBMS::cellStatsForModule(const ModuleReadings& module) {
 	uint32_t total = 0;
 	uint16_t minValue = UINT16_MAX;
 	uint16_t maxValue = 0;
@@ -176,7 +149,7 @@ ReadBMS::AggregateStats ReadBMS::cellStatsForModule(const adbms6830::BMSInterfac
 	return stats;
 }
 
-ReadBMS::AggregateStats ReadBMS::thermistorStatsForModule(const adbms6830::BMSInterface::ModuleData& module) {
+ReadBMS::AggregateStats ReadBMS::thermistorStatsForModule(const ModuleReadings& module) {
 	float total = 0.0f;
 	float minValue = INFINITY;
 	float maxValue = -INFINITY;
@@ -213,29 +186,102 @@ void ReadBMS::configureSpiPins() const {
 	SPI1.setSCK(ADBMS_SPI_SCLK);
 }
 
-void ReadBMS::updatePollData() {
-	pollData_.connectedModuleCount = 0;
+ReadBMS::ChainPollResult ReadBMS::pollChain(adbms6830::BMSInterface& bmsInterface,
+                                            std::array<ModuleState, kModuleCount>& moduleStates,
+                                            std::size_t detectedModuleCount) const {
+	bmsInterface.setModuleCount(detectedModuleCount);
 
+	const adbms6830::BMSStatus cellStatus = bmsInterface.readAllCellVoltages();
+	const adbms6830::BMSStatus thermStatus = bmsInterface.readAllThermistors();
+	const bool cellReadUsable = isUsableStatus(cellStatus);
+	const bool thermReadUsable = isUsableStatus(thermStatus);
+
+	ChainPollResult result{};
 	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
-		const auto& module = bmsInterface_.module(moduleIndex);
-		const ModuleState& state = moduleStates_[moduleIndex];
-		ModuleReadings& readings = pollData_.modules[moduleIndex];
+		ModuleState& state = moduleStates[moduleIndex];
+		const auto& module = bmsInterface.module(moduleIndex);
+		const bool moduleSeen = cellReadUsable &&
+		                        thermReadUsable &&
+		                        module.dataValid &&
+		                        module.thermistorValid &&
+		                        hasAnyValidCell(module) &&
+		                        hasAnyValidThermistor(module);
 
-		readings.connected = state.connected;
-		readings.cellDataValid = module.dataValid;
-		readings.thermistorDataValid = module.thermistorValid;
-		readings.cellVoltages = module.cellVoltages;
-		readings.thermistorTempsC = module.thermistorTempsC;
+		if (moduleSeen) {
+			if (state.seenCount < kConnectDebounce) {
+				++state.seenCount;
+			}
+			state.missedCount = 0;
+			if (state.seenCount >= kConnectDebounce) {
+				state.connected = true;
+			}
+		} else {
+			if (moduleIndex < detectedModuleCount) {
+				result.missingConfiguredModule = true;
+			}
+
+			if (!cellReadUsable || !thermReadUsable) {
+				continue;
+			}
+
+			state.seenCount = 0;
+			if (state.missedCount < kDisconnectDebounce) {
+				++state.missedCount;
+			}
+			if (state.missedCount >= kDisconnectDebounce) {
+				state.connected = false;
+			}
+		}
 
 		if (state.connected) {
-			++pollData_.connectedModuleCount;
+			++result.connectedModuleCount;
 		}
+	}
+
+	return result;
+}
+
+void ReadBMS::clearChainStates(std::array<ModuleState, kModuleCount>& moduleStates) const {
+	for (ModuleState& state : moduleStates) {
+		state.connected = false;
+		state.seenCount = 0;
+		state.missedCount = 0;
 	}
 }
 
-bool ReadBMS::allConfiguredModulesHaveCells(std::size_t moduleCount) const {
+void ReadBMS::updatePollData() {
+	pollData_.connectedModuleCount = 0;
+	for (ModuleReadings& readings : pollData_.modules) {
+		readings = ModuleReadings{};
+	}
+
+	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
+		const ModuleState& mainState = mainModuleStates_[moduleIndex];
+		if (mainState.connected) {
+			copyModuleReadings(pollData_.modules[moduleIndex], mainBmsInterface_.module(moduleIndex), true);
+			++pollData_.connectedModuleCount;
+		}
+	}
+
+	for (std::size_t auxIndex = 0; auxIndex < kModuleCount; ++auxIndex) {
+		if (!auxModuleStates_[auxIndex].connected) {
+			continue;
+		}
+
+		const std::size_t logicalIndex = (kModuleCount - 1u) - auxIndex;
+		ModuleReadings& readings = pollData_.modules[logicalIndex];
+		if (readings.connected) {
+			continue;
+		}
+
+		copyModuleReadings(readings, auxBmsInterface_.module(auxIndex), true);
+		++pollData_.connectedModuleCount;
+	}
+}
+
+bool ReadBMS::allConfiguredModulesHaveCells(adbms6830::BMSInterface& bmsInterface, std::size_t moduleCount) const {
 	for (std::size_t moduleIndex = 0; moduleIndex < moduleCount; ++moduleIndex) {
-		const auto& module = bmsInterface_.module(moduleIndex);
+		const auto& module = bmsInterface.module(moduleIndex);
 		if (!module.dataValid || !hasAnyValidCell(module)) {
 			return false;
 		}
@@ -243,16 +289,26 @@ bool ReadBMS::allConfiguredModulesHaveCells(std::size_t moduleCount) const {
 	return moduleCount > 0;
 }
 
-std::size_t ReadBMS::scanModuleCount() {
+std::size_t ReadBMS::scanModuleCount(adbms6830::BMSInterface& bmsInterface) {
 	std::size_t bestCount = 1;
 	for (std::size_t candidate = 1; candidate <= kModuleCount; ++candidate) {
-		bmsInterface_.setModuleCount(candidate);
-		const adbms6830::BMSStatus status = bmsInterface_.readAllCellVoltages();
-		if (isUsableStatus(status) && allConfiguredModulesHaveCells(candidate)) {
+		bmsInterface.setModuleCount(candidate);
+		const adbms6830::BMSStatus status = bmsInterface.readAllCellVoltages();
+		if (isUsableStatus(status) && allConfiguredModulesHaveCells(bmsInterface, candidate)) {
 			bestCount = candidate;
 			continue;
 		}
 		break;
 	}
 	return bestCount;
+}
+
+void ReadBMS::copyModuleReadings(ModuleReadings& destination,
+                                 const adbms6830::BMSInterface::ModuleData& source,
+                                 bool connected) const {
+	destination.connected = connected;
+	destination.cellDataValid = source.dataValid;
+	destination.thermistorDataValid = source.thermistorValid;
+	destination.cellVoltages = source.cellVoltages;
+	destination.thermistorTempsC = source.thermistorTempsC;
 }

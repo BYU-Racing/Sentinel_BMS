@@ -46,6 +46,11 @@ private:
 		uint8_t missedCount = 0;
 	};
 
+	struct ChainPollResult {
+		std::size_t connectedModuleCount = 0;
+		bool missingConfiguredModule = false;
+	};
+
 	struct AggregateStats {
 		float minValue = 0.0f;
 		float maxValue = 0.0f;
@@ -55,20 +60,32 @@ private:
 	static bool isUsableStatus(adbms6830::BMSStatus status);
 	static bool hasAnyValidCell(const adbms6830::BMSInterface::ModuleData& module);
 	static bool hasAnyValidThermistor(const adbms6830::BMSInterface::ModuleData& module);
-	static AggregateStats cellStatsForModule(const adbms6830::BMSInterface::ModuleData& module);
-	static AggregateStats thermistorStatsForModule(const adbms6830::BMSInterface::ModuleData& module);
+	static AggregateStats cellStatsForModule(const ModuleReadings& module);
+	static AggregateStats thermistorStatsForModule(const ModuleReadings& module);
 
 	void configureSpiPins() const;
+	ChainPollResult pollChain(adbms6830::BMSInterface& bmsInterface,
+	                          std::array<ModuleState, kModuleCount>& moduleStates,
+	                          std::size_t detectedModuleCount) const;
+	void clearChainStates(std::array<ModuleState, kModuleCount>& moduleStates) const;
 	void updatePollData();
-	bool allConfiguredModulesHaveCells(std::size_t moduleCount) const;
-	std::size_t scanModuleCount();
+	bool allConfiguredModulesHaveCells(adbms6830::BMSInterface& bmsInterface, std::size_t moduleCount) const;
+	std::size_t scanModuleCount(adbms6830::BMSInterface& bmsInterface);
+	void copyModuleReadings(ModuleReadings& destination,
+	                        const adbms6830::BMSInterface::ModuleData& source,
+	                        bool connected) const;
 
 	static const SPISettings kBmsSpiSettings;
 
-	adbms6830::ADBMS6830Driver bmsDriver_;
-	adbms6830::BMSInterface bmsInterface_;
-	std::array<ModuleState, kModuleCount> moduleStates_{};
+	adbms6830::ADBMS6830Driver mainBmsDriver_;
+	adbms6830::ADBMS6830Driver auxBmsDriver_;
+	adbms6830::BMSInterface mainBmsInterface_;
+	adbms6830::BMSInterface auxBmsInterface_;
+	std::array<ModuleState, kModuleCount> mainModuleStates_{};
+	std::array<ModuleState, kModuleCount> auxModuleStates_{};
 	PollData pollData_{};
-	std::size_t detectedModuleCount_ = 1;
-	uint32_t lastModuleScanMs_ = 0;
+	std::size_t detectedMainModuleCount_ = 1;
+	std::size_t detectedAuxModuleCount_ = 1;
+	uint32_t lastMainModuleScanMs_ = 0;
+	uint32_t lastAuxModuleScanMs_ = 0;
 };
