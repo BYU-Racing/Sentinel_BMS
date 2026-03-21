@@ -9,7 +9,7 @@ void LEDControl::begin() {
 }
 
 void LEDControl::update(const SystemStatuses& statuses) {
-	leds_[0] = toColor(statuses.board);
+	leds_[0] = toColor(statuses.BMS);
 	leds_[1] = toColor(statuses.voltage);
 	leds_[2] = toColor(statuses.temp);
 

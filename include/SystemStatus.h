@@ -222,7 +222,7 @@ inline StatusMode evaluateDangerousBmsStatus(const PollData& pollData) {
 
 template <typename PollData>
 inline void updateStatusesFromBmsData(const PollData& pollData, SystemStatuses& statuses) {
-	statuses.board = (pollData.connectedModuleCount > 0) ? StatusMode::GOOD : StatusMode::READY;
+	statuses.board = StatusMode::GOOD; // TODO what is a board error?
 	statuses.voltage = (pollData.connectedModuleCount > 0) ? StatusMode::GOOD : StatusMode::DISCONNECTED;
 	statuses.temp = (pollData.connectedModuleCount > 0) ? StatusMode::GOOD : StatusMode::DISCONNECTED;
 	statuses.moduleStatuses.fill(StatusMode::DISCONNECTED);
