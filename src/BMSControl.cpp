@@ -200,12 +200,8 @@ ReadBMS::ChainPollResult ReadBMS::pollChain(adbms6830::BMSInterface& bmsInterfac
 	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
 		ModuleState& state = moduleStates[moduleIndex];
 		const auto& module = bmsInterface.module(moduleIndex);
-		const bool moduleSeen = cellReadUsable &&
-		                        thermReadUsable &&
-		                        module.dataValid &&
-		                        module.thermistorValid &&
-		                        hasAnyValidCell(module) &&
-		                        hasAnyValidThermistor(module);
+		const bool cellSeen = cellReadUsable && module.dataValid && hasAnyValidCell(module);
+		const bool moduleSeen = cellSeen;
 
 		if (moduleSeen) {
 			if (state.seenCount < kConnectDebounce) {
@@ -220,7 +216,7 @@ ReadBMS::ChainPollResult ReadBMS::pollChain(adbms6830::BMSInterface& bmsInterfac
 				result.missingConfiguredModule = true;
 			}
 
-			if (!cellReadUsable || !thermReadUsable) {
+			if (!cellReadUsable) {
 				continue;
 			}
 

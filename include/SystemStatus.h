@@ -9,13 +9,35 @@
 #include "CONSTANTS.h"
 
 enum class StatusMode : uint8_t {
-	GOOD = 0,
-	WARNING,
-	ERROR,
-	READY,
-	BAD_DATA,
-	DISCONNECTED
+	GOOD = 0, 			// Green
+	WARNING,			// Yellow
+	EXHAUSTED,			// Orange
+	ERROR,				// Red
+	READY,				// Blue
+	BAD_DATA,			// Purple
+	DISCONNECTED		// Off
 };
+
+inline const char* statusModeName(StatusMode mode) {
+	switch (mode) {
+	case StatusMode::GOOD:
+		return "GOOD";
+	case StatusMode::WARNING:
+		return "WARNING";
+	case StatusMode::EXHAUSTED:
+		return "EXHAUSTED";
+	case StatusMode::ERROR:
+		return "ERROR";
+	case StatusMode::READY:
+		return "READY";
+	case StatusMode::BAD_DATA:
+		return "BAD_DATA";
+	case StatusMode::DISCONNECTED:
+		return "DISCONNECTED";
+	}
+
+	return "UNKNOWN";
+}
 
 struct SystemStatuses {
 	StatusMode board = StatusMode::READY;
@@ -36,9 +58,15 @@ inline StatusMode combineAggregateStatus(StatusMode current, StatusMode candidat
 	if (candidate == StatusMode::ERROR && current != StatusMode::BAD_DATA) {
 		return StatusMode::ERROR;
 	}
-	if (candidate == StatusMode::WARNING &&
+	if (candidate == StatusMode::EXHAUSTED &&
 	    current != StatusMode::BAD_DATA &&
 	    current != StatusMode::ERROR) {
+		return StatusMode::EXHAUSTED;
+	}
+	if (candidate == StatusMode::WARNING &&
+	    current != StatusMode::BAD_DATA &&
+	    current != StatusMode::ERROR &&
+	    current != StatusMode::EXHAUSTED) {
 		return StatusMode::WARNING;
 	}
 	if (candidate == StatusMode::GOOD &&
@@ -63,7 +91,10 @@ inline StatusMode evaluateVoltageStatus(const ModuleReadings& module) {
 		if (cellMv < constants::kCellVoltageErrorMinMv || cellMv > constants::kCellVoltageErrorMaxMv) {
 			return StatusMode::ERROR;
 		}
-		if (cellMv < constants::kCellVoltageWarningMinMv || cellMv > constants::kCellVoltageWarningMaxMv) {
+		if (cellMv < constants::kCellVoltageExhaustedMinMv || cellMv > constants::kCellVoltageWarningMaxMv) {
+			return StatusMode::EXHAUSTED;
+		}
+		if (cellMv < constants::kCellVoltageGoodMinMv || cellMv > constants::kCellVoltageGoodMaxMv) {
 			warning = true;
 		}
 	}
@@ -84,10 +115,16 @@ inline StatusMode evaluateTempStatus(const ModuleReadings& module) {
 		if (isnan(tempC)) {
 			return StatusMode::BAD_DATA;
 		}
-		if (tempC > constants::kTempErrorMaxC) {
+		if (tempC < constants::kTempWarningMinC) {
+			return StatusMode::BAD_DATA;
+		}
+		if (tempC > constants::kTempExhaustedMaxC) {
 			return StatusMode::ERROR;
 		}
-		if (tempC < constants::kTempWarningMinC || tempC > constants::kTempWarningMaxC) {
+		if (tempC > constants::kTempWarningMaxC) {
+			return StatusMode::EXHAUSTED;
+		}
+		if (tempC > constants::kTempGoodMaxC) {
 			warning = true;
 		}
 	}
@@ -104,6 +141,9 @@ inline StatusMode combineModuleStatus(StatusMode voltageStatus, StatusMode tempS
 	}
 	if (voltageStatus == StatusMode::ERROR || tempStatus == StatusMode::ERROR) {
 		return StatusMode::ERROR;
+	}
+	if (voltageStatus == StatusMode::EXHAUSTED || tempStatus == StatusMode::EXHAUSTED) {
+		return StatusMode::EXHAUSTED;
 	}
 	if (voltageStatus == StatusMode::WARNING || tempStatus == StatusMode::WARNING) {
 		return StatusMode::WARNING;
@@ -133,7 +173,7 @@ inline StatusMode evaluateDangerousBmsModuleStatus(const ModuleReadings& module)
 		}
 
 		hasValidCell = true;
-		if (cellMv < constants::kCellVoltageWarningMinMv || cellMv > constants::kCellVoltageErrorMaxMv) {
+		if (cellMv < constants::kCellVoltageExhaustedMinMv || cellMv > constants::kCellVoltageErrorMaxMv) {
 			return StatusMode::ERROR;
 		}
 	}
@@ -153,7 +193,7 @@ inline StatusMode evaluateDangerousBmsModuleStatus(const ModuleReadings& module)
 		}
 
 		++validThermistorCount;
-		if (tempC > constants::kTempErrorMaxC) {
+		if (tempC > constants::kTempWarningMaxC) {
 			return StatusMode::ERROR;
 		}
 	}
@@ -169,7 +209,9 @@ inline StatusMode evaluateDangerousBmsStatus(const PollData& pollData) {
 
 	for (const auto& module : pollData.modules) {
 		const StatusMode moduleStatus = evaluateDangerousBmsModuleStatus(module);
-		if (moduleStatus == StatusMode::BAD_DATA || moduleStatus == StatusMode::ERROR) {
+		if (moduleStatus == StatusMode::BAD_DATA ||
+		    moduleStatus == StatusMode::EXHAUSTED ||
+		    moduleStatus == StatusMode::ERROR) {
 			return StatusMode::ERROR;
 		}
 	}
@@ -205,8 +247,9 @@ inline void updateStatusesFromBmsData(const PollData& pollData, SystemStatuses& 
 #else
 	if (pollData.connectedModuleCount < constants::kModuleCount) {
 		statuses.BMS = StatusMode::BAD_DATA;
-	} else if (statuses.voltage == StatusMode::BAD_DATA || statuses.voltage == StatusMode::ERROR ||
-	           statuses.temp == StatusMode::BAD_DATA || statuses.temp == StatusMode::ERROR) {
+	} else if (statuses.voltage == StatusMode::BAD_DATA || statuses.voltage == StatusMode::EXHAUSTED ||
+	           statuses.voltage == StatusMode::ERROR || statuses.temp == StatusMode::BAD_DATA ||
+	           statuses.temp == StatusMode::EXHAUSTED || statuses.temp == StatusMode::ERROR) {
 		statuses.BMS = StatusMode::ERROR;
 	} else if (statuses.board != StatusMode::GOOD && statuses.board != StatusMode::READY) {
 		statuses.BMS = StatusMode::ERROR;

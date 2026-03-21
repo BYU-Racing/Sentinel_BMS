@@ -40,7 +40,7 @@ namespace adbms6830 {
 		static constexpr float kThermNominalTempK = 298.15f;
 		static constexpr float kThermNominalOhms = 10000.0f;
 		static constexpr float kThermBeta = 3470.0f;
-		static constexpr uint32_t kAuxPollTimeoutMs = 100;
+		static constexpr uint32_t kAuxPollTimeoutMs = 250;
 		static constexpr uint8_t kBalanceDcto = 0x3Fu; // Max timeout count
 		static constexpr bool kBalanceDctoExtendedRange = true; // 16-minute steps when true
 

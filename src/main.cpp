@@ -22,9 +22,6 @@ namespace {
 } // namespace
 
 void setup() {
-	// Serial output is only used for periodic module telemetry
-	Serial.begin(115200);
-
 	// Initialize the BMS interface
 	readBms.begin();
 
@@ -62,13 +59,31 @@ void loop() {
 		ledControl.update(gSystemStatuses);
 	}
 
+
+}
+
+void setup1() {
+	// Serial output is used for periodic module telemetry
+	Serial.begin(115200);
+}
+
+void loop1() {
+	const uint32_t now = millis();
 	// Logging is intentionally decoupled from polling so serial I/O cannot throttle the
 	// battery sampling rate or the visual status update cadence.
 	// TODO, make logging more interactive
 	if (now - lastLogMs >= constants::kLogIntervalMs) {
 		lastLogMs = now;
+
+		Serial.print("status BMS: ");
+		Serial.println(statusModeName(gSystemStatuses.BMS));
+		Serial.print("status board: ");
+		Serial.println(statusModeName(gSystemStatuses.board));
+		Serial.print("status voltage: ");
+		Serial.println(statusModeName(gSystemStatuses.voltage));
+		Serial.print("status temp: ");
+		Serial.println(statusModeName(gSystemStatuses.temp));
+
 		readBms.logConnectedModules();
 	}
 }
-
-// TODO - add loop2 for logging and not critical functions
