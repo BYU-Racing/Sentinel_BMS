@@ -111,6 +111,73 @@ inline StatusMode combineModuleStatus(StatusMode voltageStatus, StatusMode tempS
 	return StatusMode::GOOD;
 }
 
+#if defined(SENTINEL_DANGEROUS_BMS_MODE)
+template <typename ModuleReadings>
+inline StatusMode evaluateDangerousBmsModuleStatus(const ModuleReadings& module) {
+	constexpr uint16_t kDangerousModeIgnoredCellMv = 5500;
+
+	if (!module.connected) {
+		return StatusMode::DISCONNECTED;
+	}
+	if (!module.cellDataValid || !module.thermistorDataValid) {
+		return StatusMode::BAD_DATA;
+	}
+
+	bool hasValidCell = false;
+	for (uint16_t cellMv : module.cellVoltages) {
+		if (cellMv == adbms6830::BMSInterface::kInvalidCellValue) {
+			return StatusMode::BAD_DATA;
+		}
+		if (cellMv > kDangerousModeIgnoredCellMv) {
+			continue;
+		}
+
+		hasValidCell = true;
+		if (cellMv < constants::kCellVoltageWarningMinMv || cellMv > constants::kCellVoltageErrorMaxMv) {
+			return StatusMode::ERROR;
+		}
+	}
+
+	if (!hasValidCell) {
+		return StatusMode::BAD_DATA;
+	}
+
+	std::size_t validThermistorCount = 0;
+	for (std::size_t i = 0; i < constants::kThermistorsPerModule; ++i) {
+		const float tempC = module.thermistorTempsC[i];
+		if (isnan(tempC)) {
+			return StatusMode::BAD_DATA;
+		}
+		if (tempC < 0.0f) {
+			continue;
+		}
+
+		++validThermistorCount;
+		if (tempC > constants::kTempErrorMaxC) {
+			return StatusMode::ERROR;
+		}
+	}
+
+	return validThermistorCount >= 2 ? StatusMode::GOOD : StatusMode::BAD_DATA;
+}
+
+template <typename PollData>
+inline StatusMode evaluateDangerousBmsStatus(const PollData& pollData) {
+	if (pollData.connectedModuleCount < constants::kModuleCount) {
+		return StatusMode::BAD_DATA;
+	}
+
+	for (const auto& module : pollData.modules) {
+		const StatusMode moduleStatus = evaluateDangerousBmsModuleStatus(module);
+		if (moduleStatus == StatusMode::BAD_DATA || moduleStatus == StatusMode::ERROR) {
+			return StatusMode::ERROR;
+		}
+	}
+
+	return StatusMode::GOOD;
+}
+#endif
+
 template <typename PollData>
 inline void updateStatusesFromBmsData(const PollData& pollData, SystemStatuses& statuses) {
 	statuses.board = (pollData.connectedModuleCount > 0) ? StatusMode::GOOD : StatusMode::READY;
@@ -133,6 +200,9 @@ inline void updateStatusesFromBmsData(const PollData& pollData, SystemStatuses& 
 		statuses.temp = combineAggregateStatus(statuses.temp, tempStatus);
 	}
 
+#if defined(SENTINEL_DANGEROUS_BMS_MODE)
+	statuses.BMS = evaluateDangerousBmsStatus(pollData);
+#else
 	if (pollData.connectedModuleCount < constants::kModuleCount) {
 		statuses.BMS = StatusMode::BAD_DATA;
 	} else if (statuses.voltage == StatusMode::BAD_DATA || statuses.voltage == StatusMode::ERROR ||
@@ -143,4 +213,5 @@ inline void updateStatusesFromBmsData(const PollData& pollData, SystemStatuses& 
 	} else {
 		statuses.BMS = StatusMode::GOOD;
 	}
+#endif
 }
