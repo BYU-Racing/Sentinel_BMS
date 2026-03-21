@@ -17,6 +17,9 @@ namespace {
 	JboxIO jbox;
 	LEDControl ledControl;
 	ReadBMS readBms;
+	volatile bool balancingOn = false;
+	bool appliedBalancingOn = false;
+	String serialCommandBuffer;
 	uint32_t lastPollMs = 0;
 	uint32_t lastLogMs = 0;
 } // namespace
@@ -49,6 +52,11 @@ void loop() {
 		// Poll the slave boards, and get the latest readings
 		readBms.pollBMS();
 
+		if (balancingOn != appliedBalancingOn || balancingOn) {
+			readBms.updateBalancing(balancingOn);
+			appliedBalancingOn = balancingOn;
+		}
+
 		// Parse the readings in to basic statuses
 		updateStatusesFromBmsData(readBms.data(), gSystemStatuses);
 
@@ -69,6 +77,25 @@ void setup1() {
 
 void loop1() {
 	const uint32_t now = millis();
+	while (Serial.available() > 0) {
+		const char ch = static_cast<char>(Serial.read());
+		if (ch == '\r') {
+			continue;
+		}
+		if (ch == '\n') {
+			serialCommandBuffer.trim();
+			serialCommandBuffer.toLowerCase();
+			if (serialCommandBuffer == "balancing on") {
+				balancingOn = true;
+			} else if (serialCommandBuffer == "balancing off") {
+				balancingOn = false;
+			}
+			serialCommandBuffer = "";
+			continue;
+		}
+		serialCommandBuffer += ch;
+	}
+
 	// Logging is intentionally decoupled from polling so serial I/O cannot throttle the
 	// battery sampling rate or the visual status update cadence.
 	// TODO, make logging more interactive
@@ -83,6 +110,7 @@ void loop1() {
 		Serial.println(statusModeName(gSystemStatuses.voltage));
 		Serial.print("status temp: ");
 		Serial.println(statusModeName(gSystemStatuses.temp));
+		readBms.logBalancingState();
 
 		readBms.logConnectedModules();
 	}

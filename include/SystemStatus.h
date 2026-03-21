@@ -204,7 +204,7 @@ inline StatusMode evaluateDangerousBmsModuleStatus(const ModuleReadings& module)
 template <typename PollData>
 inline StatusMode evaluateDangerousBmsStatus(const PollData& pollData) {
 	if (pollData.connectedModuleCount < constants::kModuleCount) {
-		return StatusMode::BAD_DATA;
+		return StatusMode::READY;
 	}
 
 	for (const auto& module : pollData.modules) {
@@ -246,7 +246,7 @@ inline void updateStatusesFromBmsData(const PollData& pollData, SystemStatuses& 
 	statuses.BMS = evaluateDangerousBmsStatus(pollData);
 #else
 	if (pollData.connectedModuleCount < constants::kModuleCount) {
-		statuses.BMS = StatusMode::BAD_DATA;
+		statuses.BMS = StatusMode::READY;
 	} else if (statuses.voltage == StatusMode::BAD_DATA || statuses.voltage == StatusMode::EXHAUSTED ||
 	           statuses.voltage == StatusMode::ERROR || statuses.temp == StatusMode::BAD_DATA ||
 	           statuses.temp == StatusMode::EXHAUSTED || statuses.temp == StatusMode::ERROR) {

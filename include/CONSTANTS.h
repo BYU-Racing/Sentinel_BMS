@@ -23,6 +23,9 @@ namespace constants {
 	constexpr uint16_t kCellVoltageGoodMaxMv = 4150;
 	constexpr uint16_t kCellVoltageWarningMaxMv = 4200;
 	constexpr uint16_t kCellVoltageErrorMaxMv = 4250;
+	constexpr uint16_t kBalanceThresholdMv = 50;
+	constexpr uint16_t kBalanceDisableDeltaMv = 0;
+	constexpr uint16_t kBalanceMaxCellMv = 5500;
 
 	constexpr float kTempWarningMinC = 5.0f;
 	constexpr float kTempGoodMaxC = 50.0f;

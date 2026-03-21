@@ -42,6 +42,66 @@ const ReadBMS::PollData& ReadBMS::data() const {
 	return pollData_;
 }
 
+void ReadBMS::updateBalancing(bool enabled) {
+	if (!enabled) {
+		mainBmsInterface_.balancingOff();
+		auxBmsInterface_.balancingOff();
+		mainBalanceMasks_.fill(0);
+		auxBalanceMasks_.fill(0);
+		for (ModuleReadings& module : pollData_.modules) {
+			module.balanceMask = 0;
+		}
+		return;
+	}
+
+	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
+		ModuleReadings& module = pollData_.modules[moduleIndex];
+		module.balanceMask = balanceMaskForModule(module, module.balanceMask);
+	}
+
+	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
+		if (mainModuleStates_[moduleIndex].connected) {
+			applyBalanceMask(mainBmsInterface_, mainBalanceMasks_, moduleIndex, pollData_.modules[moduleIndex].balanceMask);
+		} else {
+			applyBalanceMask(mainBmsInterface_, mainBalanceMasks_, moduleIndex, 0);
+		}
+	}
+
+	for (std::size_t auxIndex = 0; auxIndex < kModuleCount; ++auxIndex) {
+		const std::size_t logicalIndex = (kModuleCount - 1u) - auxIndex;
+		if (auxModuleStates_[auxIndex].connected && !mainModuleStates_[logicalIndex].connected) {
+			applyBalanceMask(auxBmsInterface_, auxBalanceMasks_, auxIndex, pollData_.modules[logicalIndex].balanceMask);
+		} else {
+			applyBalanceMask(auxBmsInterface_, auxBalanceMasks_, auxIndex, 0);
+		}
+	}
+}
+
+void ReadBMS::logBalancingState() const {
+	bool anyBalancing = false;
+	Serial.print("balancing");
+	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
+		const ModuleReadings& module = pollData_.modules[moduleIndex];
+		for (std::size_t cellIndex = 0; cellIndex < module.cellVoltages.size(); ++cellIndex) {
+			const uint16_t cellBit = static_cast<uint16_t>(1u << cellIndex);
+			if ((module.balanceMask & cellBit) == 0u) {
+				continue;
+			}
+
+			anyBalancing = true;
+			Serial.print(' ');
+			Serial.print(moduleIndex + 1);
+			Serial.print('-');
+			Serial.print(cellIndex + 1);
+		}
+	}
+
+	if (!anyBalancing) {
+		Serial.print(" off");
+	}
+	Serial.println();
+}
+
 void ReadBMS::logConnectedModules() const {
 	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
 		const ModuleReadings& module = pollData_.modules[moduleIndex];
@@ -177,6 +237,63 @@ ReadBMS::AggregateStats ReadBMS::thermistorStatsForModule(const ModuleReadings& 
 	return stats;
 }
 
+uint16_t ReadBMS::balanceMaskForModule(const ModuleReadings& module, uint16_t currentMask) {
+	if (!module.connected || !module.cellDataValid) {
+		return 0;
+	}
+
+	uint16_t minCellMv = UINT16_MAX;
+	for (uint16_t cellMv : module.cellVoltages) {
+		if (cellMv == adbms6830::BMSInterface::kInvalidCellValue) {
+			return 0;
+		}
+		if (cellMv > constants::kBalanceMaxCellMv) {
+			return 0;
+		}
+		if (cellMv < minCellMv) {
+			minCellMv = cellMv;
+		}
+	}
+
+	if (minCellMv == UINT16_MAX) {
+		return 0;
+	}
+
+	uint16_t desiredMask = 0;
+	for (std::size_t cellIndex = 0; cellIndex < module.cellVoltages.size(); ++cellIndex) {
+		const uint16_t cellMv = module.cellVoltages[cellIndex];
+		const uint16_t deltaMv = static_cast<uint16_t>(cellMv - minCellMv);
+		const uint16_t cellBit = static_cast<uint16_t>(1u << cellIndex);
+		const bool currentlyBalancing = (currentMask & cellBit) != 0u;
+		if (currentlyBalancing) {
+			if (deltaMv > constants::kBalanceDisableDeltaMv) {
+				desiredMask = static_cast<uint16_t>(desiredMask | cellBit);
+			}
+		} else if (deltaMv > constants::kBalanceThresholdMv) {
+			desiredMask = static_cast<uint16_t>(desiredMask | cellBit);
+		}
+	}
+
+	return desiredMask;
+}
+
+void ReadBMS::applyBalanceMask(adbms6830::BMSInterface& bmsInterface,
+                               std::array<uint16_t, kModuleCount>& appliedMasks,
+                               std::size_t moduleIndex,
+                               uint16_t desiredMask) {
+	if (moduleIndex >= bmsInterface.moduleCount()) {
+		appliedMasks[moduleIndex] = desiredMask;
+		return;
+	}
+
+	if (appliedMasks[moduleIndex] == desiredMask) {
+		return;
+	}
+
+	bmsInterface.balanceModule(moduleIndex, desiredMask);
+	appliedMasks[moduleIndex] = desiredMask;
+}
+
 void ReadBMS::configureSpiPins() const {
 	pinMode(ADBMS_AUX_CS, OUTPUT);
 	digitalWrite(ADBMS_AUX_CS, HIGH);
@@ -192,9 +309,8 @@ ReadBMS::ChainPollResult ReadBMS::pollChain(adbms6830::BMSInterface& bmsInterfac
 	bmsInterface.setModuleCount(detectedModuleCount);
 
 	const adbms6830::BMSStatus cellStatus = bmsInterface.readAllCellVoltages();
-	const adbms6830::BMSStatus thermStatus = bmsInterface.readAllThermistors();
 	const bool cellReadUsable = isUsableStatus(cellStatus);
-	const bool thermReadUsable = isUsableStatus(thermStatus);
+	bmsInterface.readAllThermistors();
 
 	ChainPollResult result{};
 	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
@@ -305,6 +421,7 @@ void ReadBMS::copyModuleReadings(ModuleReadings& destination,
 	destination.connected = connected;
 	destination.cellDataValid = source.dataValid;
 	destination.thermistorDataValid = source.thermistorValid;
+	destination.balanceMask = source.balanceMask;
 	destination.cellVoltages = source.cellVoltages;
 	destination.thermistorTempsC = source.thermistorTempsC;
 }

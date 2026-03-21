@@ -17,6 +17,7 @@ public:
 		bool connected = false;
 		bool cellDataValid = false;
 		bool thermistorDataValid = false;
+		uint16_t balanceMask = 0;
 		std::array<uint16_t, adbms6830::BMSInterface::kCellsPerModule> cellVoltages{};
 		std::array<float, adbms6830::BMSInterface::kGpioPerModule> thermistorTempsC{};
 	};
@@ -30,7 +31,9 @@ public:
 
 	void begin();
 	void pollBMS();
+	void updateBalancing(bool enabled);
 	const PollData& data() const;
+	void logBalancingState() const;
 	void logConnectedModules() const;
 
 private:
@@ -62,6 +65,11 @@ private:
 	static bool hasAnyValidThermistor(const adbms6830::BMSInterface::ModuleData& module);
 	static AggregateStats cellStatsForModule(const ModuleReadings& module);
 	static AggregateStats thermistorStatsForModule(const ModuleReadings& module);
+	static uint16_t balanceMaskForModule(const ModuleReadings& module, uint16_t currentMask);
+	void applyBalanceMask(adbms6830::BMSInterface& bmsInterface,
+	                      std::array<uint16_t, kModuleCount>& appliedMasks,
+	                      std::size_t moduleIndex,
+	                      uint16_t desiredMask);
 
 	void configureSpiPins() const;
 	ChainPollResult pollChain(adbms6830::BMSInterface& bmsInterface,
@@ -83,6 +91,8 @@ private:
 	adbms6830::BMSInterface auxBmsInterface_;
 	std::array<ModuleState, kModuleCount> mainModuleStates_{};
 	std::array<ModuleState, kModuleCount> auxModuleStates_{};
+	std::array<uint16_t, kModuleCount> mainBalanceMasks_{};
+	std::array<uint16_t, kModuleCount> auxBalanceMasks_{};
 	PollData pollData_{};
 	std::size_t detectedMainModuleCount_ = 1;
 	std::size_t detectedAuxModuleCount_ = 1;
