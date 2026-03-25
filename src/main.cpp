@@ -22,6 +22,7 @@ namespace {
 	String serialCommandBuffer;
 	uint32_t lastPollMs = 0;
 	uint32_t lastLogMs = 0;
+	uint8_t logCycleCount = 0;
 } // namespace
 
 void setup() {
@@ -101,6 +102,7 @@ void loop1() {
 	// TODO, make logging more interactive
 	if (now - lastLogMs >= constants::kLogIntervalMs) {
 		lastLogMs = now;
+		++logCycleCount;
 
 		Serial.print("status BMS: ");
 		Serial.println(statusModeName(gSystemStatuses.BMS));
@@ -113,5 +115,9 @@ void loop1() {
 		readBms.logBalancingState();
 
 		readBms.logConnectedModules();
+		if (logCycleCount >= 10u) {
+			readBms.logModuleSiliconIds();
+			logCycleCount = 0;
+		}
 	}
 }

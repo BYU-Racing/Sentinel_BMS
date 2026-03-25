@@ -35,6 +35,7 @@ public:
 	const PollData& data() const;
 	void logBalancingState() const;
 	void logConnectedModules() const;
+	void logModuleSiliconIds();
 
 private:
 	static constexpr std::size_t kModuleCount = constants::kModuleCount;
@@ -66,6 +67,7 @@ private:
 	static AggregateStats cellStatsForModule(const ModuleReadings& module);
 	static AggregateStats thermistorStatsForModule(const ModuleReadings& module);
 	static uint16_t balanceMaskForModule(const ModuleReadings& module, uint16_t currentMask);
+	static void printSiliconId(const adbms6830::BMSInterface::SiliconIdReadback& siliconId);
 	void applyBalanceMask(adbms6830::BMSInterface& bmsInterface,
 	                      std::array<uint16_t, kModuleCount>& appliedMasks,
 	                      std::size_t moduleIndex,

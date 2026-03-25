@@ -13,6 +13,14 @@
 #define ADBMS_ENABLE_LOGGING 0
 #endif
 
+#if ADBMS_ENABLE_LOGGING
+#define ADBMS_LOG_PRINT(...) Serial.print(__VA_ARGS__)
+#define ADBMS_LOG_PRINTLN(...) Serial.println(__VA_ARGS__)
+#else
+#define ADBMS_LOG_PRINT(...) ((void)0)
+#define ADBMS_LOG_PRINTLN(...) ((void)0)
+#endif
+
 namespace adbms6830 {
 	enum class BMSStatus {
 		kOk = 0,
@@ -55,10 +63,57 @@ namespace adbms6830 {
 			bool thermistorValid = false;
 		};
 
+		struct ModuleStatus {
+			std::array<uint8_t, 6> groupA{};
+			std::array<uint8_t, 6> groupB{};
+			std::array<uint8_t, 6> groupC{};
+			std::array<uint8_t, 6> groupD{};
+			std::array<uint8_t, 6> groupE{};
+			bool valid = false;
+
+			bool hasFaultFlags() const {
+				if (!valid) {
+					return false;
+				}
+
+				const uint16_t csFaults = static_cast<uint16_t>(groupC[0] | groupC[1]);
+				const uint8_t railFaults = static_cast<uint8_t>(groupC[4] & 0xFFu);
+				const uint8_t stateFaults = static_cast<uint8_t>(groupC[5] & 0xFBu);
+				const uint8_t cellOvUvFaults = static_cast<uint8_t>(groupD[0] | groupD[1] | groupD[2] | groupD[3]);
+				return csFaults != 0u || railFaults != 0u || stateFaults != 0u || cellOvUvFaults != 0u;
+			}
+
+			bool hasStateFailure() const {
+				if (!valid) {
+					return false;
+				}
+				const uint8_t stateFlags = groupC[5];
+				return (stateFlags & 0xEBu) != 0u; // VDEL, VDE, SPIFLT, SLEEP, THSD, TMODCHK, OSCCHK
+			}
+		};
+
+		struct CfgaReadback {
+			std::array<uint8_t, 6> expected{};
+			std::array<uint8_t, 6> actual{};
+			bool valid = false;
+		};
+
+		struct SiliconIdReadback {
+			std::array<uint8_t, 6> bytes{};
+			uint64_t value = 0;
+			bool valid = false;
+		};
+
 		struct PwmRegisters {
 			std::array<uint8_t, 6> groupA{};
 			std::array<uint8_t, 6> groupB{};
 			uint16_t activeMask = 0;
+		};
+
+		struct BalanceStatus {
+			uint16_t activeMask = 0;
+			uint8_t remainingDcto = 0;
+			bool dctoEnabled = false;
 		};
 
 		explicit BMSInterface(ADBMS6830Driver& driver) : driver_(driver) {
@@ -68,6 +123,158 @@ namespace adbms6830 {
 		void begin() { driver_.begin(); }
 		void setModuleCount(std::size_t moduleCount) { moduleCount_ = (moduleCount == 0 || moduleCount > kNumModules) ? 1 : moduleCount; }
 		std::size_t moduleCount() const { return moduleCount_; }
+		const std::array<ModuleStatus, kNumModules>& moduleStatuses() const { return moduleStatuses_; }
+		const std::array<CfgaReadback, kNumModules>& cfgaReadbacks() const { return cfgaReadbacks_; }
+		const std::array<SiliconIdReadback, kNumModules>& siliconIdReadbacks() const { return siliconIds_; }
+
+		BMSStatus initializeControlRegisters() {
+			constexpr std::size_t kDataBytes = 6;
+			constexpr std::size_t kPecBytes = 2;
+			constexpr std::size_t kResponseBytesPerModule = kDataBytes + kPecBytes;
+			constexpr std::size_t kPayloadBytesPerModule = kDataBytes + kPecBytes;
+
+			std::array<uint8_t, kNumModules * kPayloadBytesPerModule> payload{};
+			for (auto& readback : cfgaReadbacks_) {
+				readback = {};
+			}
+			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
+				const std::size_t txModuleIndex = (moduleCount_ - 1u) - moduleIndex;
+				uint8_t* modulePayload = payload.data() + txModuleIndex * kPayloadBytesPerModule;
+				const std::array<uint8_t, kDataBytes> expected = defaultCfgaBytes();
+
+				for (std::size_t i = 0; i < kDataBytes; ++i) {
+					modulePayload[i] = expected[i];
+				}
+
+				const uint16_t dataPec = calculateWritePec10(modulePayload, kDataBytes);
+				modulePayload[kDataBytes] = static_cast<uint8_t>((dataPec >> 8) & 0x03u);
+				modulePayload[kDataBytes + 1u] = static_cast<uint8_t>(dataPec & 0xFFu);
+			}
+
+			driver_.sendWriteCommand(CMD_WRCFGA, payload.data(), moduleCount_ * kPayloadBytesPerModule);
+
+			std::array<uint8_t, kNumModules * kResponseBytesPerModule> rxBuffer{};
+			const std::size_t rxLength = moduleCount_ * kResponseBytesPerModule;
+			driver_.sendCommandWithResponse(CMD_RDCFGA, rxBuffer.data(), rxLength);
+
+			const std::array<uint8_t, kDataBytes> expected = defaultCfgaBytes();
+			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
+				const uint8_t* moduleBytes = rxBuffer.data() + moduleIndex * kResponseBytesPerModule;
+				const uint8_t* pecBytes = moduleBytes + kDataBytes;
+				for (std::size_t i = 0; i < kDataBytes; ++i) {
+					cfgaReadbacks_[moduleIndex].expected[i] = expected[i];
+					cfgaReadbacks_[moduleIndex].actual[i] = moduleBytes[i];
+				}
+				cfgaReadbacks_[moduleIndex].valid = true;
+				if (!ADBMS6830Driver::validatePEC10(moduleBytes, kDataBytes, pecBytes)) {
+					return BMSStatus::kPecError;
+				}
+				for (std::size_t i = 0; i < kDataBytes; ++i) {
+					if (moduleBytes[i] != expected[i]) {
+						return BMSStatus::kError;
+					}
+				}
+			}
+
+			return BMSStatus::kOk;
+		}
+
+		BMSStatus readStatus() {
+			for (auto& moduleStatus : moduleStatuses_) {
+				moduleStatus = {};
+			}
+
+			bool pecFailure = false;
+			BMSStatus status = readStatusGroup(CMD_RDSTATA, &ModuleStatus::groupA, pecFailure);
+			if (status != BMSStatus::kOk) {
+				return status;
+			}
+			status = readStatusGroup(CMD_RDSTATB, &ModuleStatus::groupB, pecFailure);
+			if (status != BMSStatus::kOk) {
+				return status;
+			}
+			status = readStatusGroup(CMD_RDSTATC, &ModuleStatus::groupC, pecFailure);
+			if (status != BMSStatus::kOk) {
+				return status;
+			}
+			status = readStatusGroup(CMD_RDSTATD, &ModuleStatus::groupD, pecFailure);
+			if (status != BMSStatus::kOk) {
+				return status;
+			}
+			status = readStatusGroup(CMD_RDSTATE, &ModuleStatus::groupE, pecFailure);
+			if (status != BMSStatus::kOk) {
+				return status;
+			}
+
+			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
+				moduleStatuses_[moduleIndex].valid = true;
+			}
+			return pecFailure ? BMSStatus::kPecError : BMSStatus::kOk;
+		}
+
+		BMSStatus clearDiagnosticFlags() {
+			constexpr std::size_t kDataBytes = 6;
+			constexpr std::size_t kPecBytes = 2;
+			constexpr std::size_t kPayloadBytesPerModule = kDataBytes + kPecBytes;
+
+			std::array<uint8_t, kNumModules * kPayloadBytesPerModule> payload{};
+			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
+				const std::size_t txModuleIndex = (moduleCount_ - 1u) - moduleIndex;
+				uint8_t* modulePayload = payload.data() + txModuleIndex * kPayloadBytesPerModule;
+				const std::array<uint8_t, kDataBytes> clearMask = {
+					0xFFu, // CL_CSxFLT
+					0xFFu, // CL_CSxFLT
+					0x00u, // Reserved
+					0x00u, // Reserved
+					0xFFu, // CL_VAOV..CL_SMED
+					0xFFu  // CL_VDEL..CL_OSCCHK
+				};
+
+				for (std::size_t i = 0; i < kDataBytes; ++i) {
+					modulePayload[i] = clearMask[i];
+				}
+
+				const uint16_t dataPec = calculateWritePec10(modulePayload, kDataBytes);
+				modulePayload[kDataBytes] = static_cast<uint8_t>((dataPec >> 8) & 0x03u);
+				modulePayload[kDataBytes + 1u] = static_cast<uint8_t>(dataPec & 0xFFu);
+			}
+
+			driver_.sendWriteCommand(CMD_CLRFLAG, payload.data(), moduleCount_ * kPayloadBytesPerModule);
+			return BMSStatus::kOk;
+		}
+
+		BMSStatus readSiliconIds() {
+			constexpr std::size_t kDataBytes = 6;
+			constexpr std::size_t kPecBytes = 2;
+			constexpr std::size_t kResponseBytesPerModule = kDataBytes + kPecBytes;
+
+			for (auto& siliconId : siliconIds_) {
+				siliconId = {};
+			}
+
+			std::array<uint8_t, kNumModules * kResponseBytesPerModule> rxBuffer{};
+			const std::size_t rxLength = moduleCount_ * kResponseBytesPerModule;
+			driver_.sendCommandWithResponse(CMD_RDSID, rxBuffer.data(), rxLength);
+
+			bool pecFailure = false;
+			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
+				const uint8_t* moduleBytes = rxBuffer.data() + moduleIndex * kResponseBytesPerModule;
+				const uint8_t* pecBytes = moduleBytes + kDataBytes;
+				if (!ADBMS6830Driver::validatePEC10(moduleBytes, kDataBytes, pecBytes)) {
+					pecFailure = true;
+					continue;
+				}
+
+				SiliconIdReadback& siliconId = siliconIds_[moduleIndex];
+				for (std::size_t i = 0; i < kDataBytes; ++i) {
+					siliconId.bytes[i] = moduleBytes[i];
+				}
+				siliconId.value = packLittleEndian48(moduleBytes);
+				siliconId.valid = true;
+			}
+
+			return pecFailure ? BMSStatus::kPecError : BMSStatus::kOk;
+		}
 
 		BMSStatus readAllCellVoltages() {
 			clearModuleData();
@@ -197,6 +404,83 @@ namespace adbms6830 {
 			return pecFailure ? BMSStatus::kPecError : BMSStatus::kOk;
 		}
 
+		BMSStatus readBalanceStatus(std::size_t moduleIndex, BalanceStatus& balanceStatus) {
+			if (moduleIndex >= moduleCount_) {
+				return BMSStatus::kError;
+			}
+
+			PwmRegisters pwmRegisters{};
+			BMSStatus pwmStatus = readPwmRegisters(moduleIndex, pwmRegisters);
+			if (pwmStatus != BMSStatus::kOk) {
+				return pwmStatus;
+			}
+
+			constexpr std::size_t kDataBytes = 6;
+			constexpr std::size_t kPecBytes = 2;
+			constexpr std::size_t kResponseBytesPerModule = kDataBytes + kPecBytes;
+			std::array<uint8_t, kNumModules * kResponseBytesPerModule> rxBuffer{};
+			const std::size_t rxLength = moduleCount_ * kResponseBytesPerModule;
+
+			driver_.sendCommandWithResponse(CMD_RDCFGB, rxBuffer.data(), rxLength);
+			for (std::size_t module = 0; module < moduleCount_; ++module) {
+				uint8_t* moduleBytes = rxBuffer.data() + module * kResponseBytesPerModule;
+				uint8_t* pecBytes = moduleBytes + kDataBytes;
+				if (!ADBMS6830Driver::validatePEC10(moduleBytes, kDataBytes, pecBytes)) {
+					return BMSStatus::kPecError;
+				}
+
+				if (module == moduleIndex) {
+					const uint8_t cfgbr3 = moduleBytes[3];
+					balanceStatus.activeMask = pwmRegisters.activeMask;
+					balanceStatus.remainingDcto = static_cast<uint8_t>(cfgbr3 & 0x3Fu);
+					balanceStatus.dctoEnabled = balanceStatus.remainingDcto != 0u;
+				}
+			}
+
+			return BMSStatus::kOk;
+		}
+
+		bool confirmBalancingActive(bool verbose = true) {
+			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
+				const uint16_t expectedMask = static_cast<uint16_t>(balanceMasks_[moduleIndex] & validCellMask());
+				if (expectedMask == 0u) {
+					continue;
+				}
+
+				BalanceStatus balanceStatus{};
+				const BMSStatus readStatus = readBalanceStatus(moduleIndex, balanceStatus);
+				if (readStatus != BMSStatus::kOk) {
+					if (verbose) {
+						ADBMS_LOG_PRINT("Balance confirm read failed for module ");
+						ADBMS_LOG_PRINTLN(moduleIndex);
+					}
+					return false;
+				}
+
+				if (!balanceStatus.dctoEnabled) {
+					if (verbose) {
+						ADBMS_LOG_PRINT("Balance timer expired/disabled on module ");
+						ADBMS_LOG_PRINTLN(moduleIndex);
+					}
+					return false;
+				}
+
+				if ((balanceStatus.activeMask & validCellMask()) != expectedMask) {
+					if (verbose) {
+						ADBMS_LOG_PRINT("Balance active mask mismatch on module ");
+						ADBMS_LOG_PRINT(moduleIndex);
+						ADBMS_LOG_PRINT(": wanted 0x");
+						ADBMS_LOG_PRINT(expectedMask, HEX);
+						ADBMS_LOG_PRINT(" read 0x");
+						ADBMS_LOG_PRINTLN(balanceStatus.activeMask & validCellMask(), HEX);
+					}
+					return false;
+				}
+			}
+
+			return true;
+		}
+
 		BMSStatus readAllThermistors() {
 			clearThermistorData();
 
@@ -258,6 +542,10 @@ namespace adbms6830 {
 		const std::array<ModuleData, kNumModules>& modules() const { return modules_; }
 
 	private:
+		static constexpr uint8_t kCfgaRefOnBit = 0x80u;
+		static constexpr uint8_t kCfgaCthDefault = 0x01u;
+		static constexpr uint8_t kCfgaFilterBits = 0x00u;
+
 		void clearModuleData() {
 			for (auto& module : modules_) {
 				module.cellVoltages.fill(kInvalidCellValue);
@@ -277,8 +565,22 @@ namespace adbms6830 {
 
 		ADBMS6830Driver& driver_;
 		std::array<ModuleData, kNumModules> modules_{};
+		std::array<ModuleStatus, kNumModules> moduleStatuses_{};
+		std::array<CfgaReadback, kNumModules> cfgaReadbacks_{};
+		std::array<SiliconIdReadback, kNumModules> siliconIds_{};
 		std::array<uint16_t, kNumModules> balanceMasks_{};
 		std::size_t moduleCount_ = 1;
+
+		static constexpr std::array<uint8_t, 6> defaultCfgaBytes() {
+			return {
+				static_cast<uint8_t>(kCfgaRefOnBit | kCfgaCthDefault),
+				0x00u,
+				0x00u,
+				0xFFu,
+				0x03u,
+				kCfgaFilterBits
+			};
+		}
 
 		static constexpr uint16_t validCellMask() {
 			return (kCellsPerModule >= 16) ? 0xFFFFu : static_cast<uint16_t>((1u << kCellsPerModule) - 1u);
@@ -358,6 +660,32 @@ namespace adbms6830 {
 			return ADBMS6830Driver::calculateWritePEC10(data, length);
 		}
 
+		BMSStatus readStatusGroup(uint16_t command, std::array<uint8_t, 6> ModuleStatus::*groupMember, bool& pecFailure) {
+			constexpr std::size_t kDataBytes = 6;
+			constexpr std::size_t kPecBytes = 2;
+			constexpr std::size_t kResponseBytesPerModule = kDataBytes + kPecBytes;
+
+			std::array<uint8_t, kNumModules * kResponseBytesPerModule> rxBuffer{};
+			const std::size_t rxLength = moduleCount_ * kResponseBytesPerModule;
+			driver_.sendCommandWithResponse(command, rxBuffer.data(), rxLength);
+
+			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
+				const uint8_t* moduleBytes = rxBuffer.data() + moduleIndex * kResponseBytesPerModule;
+				const uint8_t* pecBytes = moduleBytes + kDataBytes;
+				if (!ADBMS6830Driver::validatePEC10(moduleBytes, kDataBytes, pecBytes)) {
+					pecFailure = true;
+					return BMSStatus::kPecError;
+				}
+
+				std::array<uint8_t, 6>& target = moduleStatuses_[moduleIndex].*groupMember;
+				for (std::size_t i = 0; i < kDataBytes; ++i) {
+					target[i] = moduleBytes[i];
+				}
+			}
+
+			return BMSStatus::kOk;
+		}
+
 		void writePwmRegisterGroup(uint16_t command, bool groupA) {
 			constexpr std::size_t kDataBytes = 6;
 			constexpr std::size_t kPecBytes = 2;
@@ -388,46 +716,21 @@ namespace adbms6830 {
 			driver_.sendWriteCommand(command, payload.data(), moduleCount_ * kPayloadBytesPerModule);
 		}
 
-		bool verifyBalanceMask(bool verbose = true) {
-			PwmRegisters readback{};
-			BMSStatus readStatus = readPwmRegisters(0, readback);
-			if (readStatus != BMSStatus::kOk) {
-				if (verbose && ADBMS_ENABLE_LOGGING) {
-					Serial.println("Balancing write failed: PWM readback returned PEC/error.");
-				}
-				return false;
-			}
-			if ((readback.activeMask & validCellMask()) != (balanceMasks_[0] & validCellMask())) {
-				if (verbose && ADBMS_ENABLE_LOGGING) {
-					Serial.print("Balancing verify mismatch: wanted 0x");
-					Serial.print(balanceMasks_[0] & validCellMask(), HEX);
-					Serial.print(" read 0x");
-					Serial.println(readback.activeMask & validCellMask(), HEX);
-				}
-				return false;
-			}
-			return true;
-		}
-
 		BMSStatus writeBalancingRegisters() {
 			const bool timerConfigured = setBalanceTimer(anyBalancingActive());
 			if (!timerConfigured) {
-				#if ADBMS_ENABLE_LOGGING
-				Serial.println("Balancing warning: could not update CFGB timer; continuing with PWM write.");
-				#endif
+				ADBMS_LOG_PRINTLN("Balancing warning: could not update CFGB timer; continuing with PWM write.");
 			}
 
 			writePwmRegisterGroup(CMD_WRPWMA, true);
 			writePwmRegisterGroup(CMD_WRPWMB, false);
-			if (verifyBalanceMask(false)) {
+			if (confirmBalancingActive(false)) {
 				return BMSStatus::kOk;
 			}
 
-			verifyBalanceMask(true);
+			confirmBalancingActive(true);
 			if (!timerConfigured) {
-				#if ADBMS_ENABLE_LOGGING
-				Serial.println("Balancing write failed after timer warning: PWM write also not accepted.");
-				#endif
+				ADBMS_LOG_PRINTLN("Balancing write failed after timer warning: PWM write also not accepted.");
 			}
 			return BMSStatus::kError;
 		}
@@ -447,9 +750,7 @@ namespace adbms6830 {
 				const uint8_t* moduleBytes = rxBuffer.data() + moduleIndex * kResponseBytesPerModule;
 				const uint8_t* pecBytes = moduleBytes + kDataBytes;
 				if (!ADBMS6830Driver::validatePEC10(moduleBytes, kDataBytes, pecBytes)) {
-					#if ADBMS_ENABLE_LOGGING
-					Serial.println("CFGB readback PEC check failed while setting balance timer.");
-					#endif
+					ADBMS_LOG_PRINTLN("CFGB readback PEC check failed while setting balance timer.");
 					return false;
 				}
 
@@ -495,14 +796,11 @@ namespace adbms6830 {
 			if (cfgbWriteAccepted()) {
 				return true;
 			}
-			#if ADBMS_ENABLE_LOGGING
-			Serial.println("CFGB write failed with algorithmic PEC.");
-			#endif
+			ADBMS_LOG_PRINTLN("CFGB write failed with algorithmic PEC.");
 			return false;
 		}
 
 		static void logSpiResponse(uint16_t command, const uint8_t* buffer, size_t length) {
-			#if ADBMS_ENABLE_LOGGING
 			// Serial.print("SPI CMD 0x");
 			// Serial.print(command, HEX);
 			// Serial.print(" RX:");
@@ -511,56 +809,42 @@ namespace adbms6830 {
 			(void)command;
 			(void)buffer;
 			(void)length;
-			#else
-			(void)command;
-			(void)buffer;
-			(void)length;
-			#endif
 		}
 
 		static void logPecFailure(std::size_t moduleIndex, uint16_t command, const uint8_t* data,
 		                          size_t dataLength, const uint8_t* pec, size_t pecLength) {
-			#if ADBMS_ENABLE_LOGGING
-			Serial.print("PEC failure module ");
-			Serial.print(moduleIndex);
-			Serial.print(" cmd 0x");
-			Serial.print(command, HEX);
-			Serial.print(" data:");
+			ADBMS_LOG_PRINT("PEC failure module ");
+			ADBMS_LOG_PRINT(moduleIndex);
+			ADBMS_LOG_PRINT(" cmd 0x");
+			ADBMS_LOG_PRINT(command, HEX);
+			ADBMS_LOG_PRINT(" data:");
 			logHexBytesInline(data, dataLength);
-			Serial.print(" PEC:");
+			ADBMS_LOG_PRINT(" PEC:");
 			logHexBytesInline(pec, pecLength);
-			Serial.println();
-			#else
+			ADBMS_LOG_PRINTLN();
 			(void)moduleIndex;
 			(void)command;
 			(void)data;
 			(void)dataLength;
 			(void)pec;
 			(void)pecLength;
-			#endif
 		}
 
 		static void logHexBytesInline(const uint8_t* data, size_t length) {
-			#if ADBMS_ENABLE_LOGGING
 			for (size_t i = 0; i < length; ++i) {
-				Serial.print(' ');
+				ADBMS_LOG_PRINT(' ');
 				logHexByte(data[i]);
 			}
-			#else
 			(void)data;
 			(void)length;
-			#endif
 		}
 
 		static void logHexByte(uint8_t value) {
-			#if ADBMS_ENABLE_LOGGING
 			if (value < 0x10) {
-				Serial.print('0');
+				ADBMS_LOG_PRINT('0');
 			}
-			Serial.print(value, HEX);
-			#else
+			ADBMS_LOG_PRINT(value, HEX);
 			(void)value;
-			#endif
 		}
 
 		static float tempCFromOhms(float ohms) {
@@ -573,6 +857,14 @@ namespace adbms6830 {
 
 		static uint16_t readLe16(const uint8_t* data) {
 			return static_cast<uint16_t>((static_cast<uint16_t>(data[1]) << 8) | data[0]);
+		}
+
+		static uint64_t packLittleEndian48(const uint8_t* data) {
+			uint64_t value = 0;
+			for (std::size_t i = 0; i < 6; ++i) {
+				value |= static_cast<uint64_t>(data[i]) << (8u * i);
+			}
+			return value;
 		}
 
 		static uint16_t cellRawToMilliVolts(uint16_t raw) {
@@ -604,3 +896,6 @@ namespace adbms6830 {
 		}
 	};
 } // namespace adbms6830
+
+#undef ADBMS_LOG_PRINT
+#undef ADBMS_LOG_PRINTLN

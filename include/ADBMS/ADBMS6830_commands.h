@@ -19,10 +19,18 @@ namespace adbms6830 {
 	constexpr uint16_t CMD_RDAUXB = 0x001A; // Read GPIO4-6
 	constexpr uint16_t CMD_RDAUXC = 0x001B; // Read GPIO7-9
 	constexpr uint16_t CMD_RDAUXD = 0x001F; // Read GPIO10
+	constexpr uint16_t CMD_RDCFGA = 0x0002; // Read configuration register group A
 	constexpr uint16_t CMD_RDCFGB = 0x0026; // Read configuration register group B
+	constexpr uint16_t CMD_RDSTATA = 0x0030; // Read status register group A
+	constexpr uint16_t CMD_RDSTATB = 0x0031; // Read status register group B
+	constexpr uint16_t CMD_RDSTATC = 0x0032; // Read status register group C
+	constexpr uint16_t CMD_RDSTATD = 0x0033; // Read status register group D
+	constexpr uint16_t CMD_RDSTATE = 0x0034; // Read status register group E
+	constexpr uint16_t CMD_CLRFLAG = 0x0717; // Clear latched status register group C flags
 	constexpr uint16_t CMD_WRPWMA = 0x0020; // Write PWM register group A
 	constexpr uint16_t CMD_WRPWMB = 0x0021; // Write PWM register group B
 	constexpr uint16_t CMD_RDPWMA = 0x0022; // Read PWM register group A
 	constexpr uint16_t CMD_RDPWMB = 0x0023; // Read PWM register group B
+	constexpr uint16_t CMD_WRCFGA = 0x0401; // Write configuration register group A
 	constexpr uint16_t CMD_WRCFGB = 0x0024; // Write configuration register group B
 } // namespace adbms6830
