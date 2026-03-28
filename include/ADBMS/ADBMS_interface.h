@@ -240,6 +240,17 @@ namespace adbms6830 {
 			}
 
 			driver_.sendWriteCommand(CMD_CLRFLAG, payload.data(), moduleCount_ * kPayloadBytesPerModule);
+			const BMSStatus status = readStatus();
+			if (status != BMSStatus::kOk) {
+				return status;
+			}
+
+			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
+				if (moduleStatuses_[moduleIndex].hasFaultFlags()) {
+					return BMSStatus::kError;
+				}
+			}
+
 			return BMSStatus::kOk;
 		}
 

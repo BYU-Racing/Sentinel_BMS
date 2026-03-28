@@ -115,7 +115,7 @@ void loop1() {
 		readBms.logBalancingState();
 
 		readBms.logConnectedModules();
-		if (logCycleCount >= 10u) {
+		if (logCycleCount >= 4u) {
 			readBms.logModuleSiliconIds();
 			logCycleCount = 0;
 		}

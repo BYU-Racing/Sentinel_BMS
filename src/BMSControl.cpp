@@ -19,7 +19,7 @@ void ReadBMS::begin() {
 void ReadBMS::pollBMS() {
 	const uint32_t now = millis();
 	bool moduleCountChanged = false;
-	const ChainPollResult mainPoll = pollChain(mainBmsInterface_, mainModuleStates_, detectedMainModuleCount_);
+	const ChainPollResult mainPoll = pollChain(mainBmsInterface_, mainModuleStates_, detectedMainModuleCount_, "main");
 
 	if (mainPoll.missingConfiguredModule || (now - lastMainModuleScanMs_) >= kModuleScanIntervalMs) {
 		const std::size_t previousMainModuleCount = detectedMainModuleCount_;
@@ -29,7 +29,7 @@ void ReadBMS::pollBMS() {
 	}
 
 	if (mainPoll.connectedModuleCount < kModuleCount) {
-		const ChainPollResult auxPoll = pollChain(auxBmsInterface_, auxModuleStates_, detectedAuxModuleCount_);
+		const ChainPollResult auxPoll = pollChain(auxBmsInterface_, auxModuleStates_, detectedAuxModuleCount_, "aux");
 		if (auxPoll.missingConfiguredModule || (now - lastAuxModuleScanMs_) >= kModuleScanIntervalMs) {
 			const std::size_t previousAuxModuleCount = detectedAuxModuleCount_;
 			detectedAuxModuleCount_ = scanModuleCount(auxBmsInterface_);
@@ -348,6 +348,64 @@ void ReadBMS::applyBalanceMask(adbms6830::BMSInterface& bmsInterface,
 	appliedMasks[moduleIndex] = desiredMask;
 }
 
+void ReadBMS::reportChainError(const char* chainName, const char* operation, adbms6830::BMSStatus status) const {
+	Serial.print("bms ");
+	Serial.print(chainName);
+	Serial.print(" chain ");
+	Serial.print(operation);
+	Serial.print(" failed: ");
+	switch (status) {
+		case adbms6830::BMSStatus::kOk:
+			Serial.println("ok");
+			break;
+		case adbms6830::BMSStatus::kError:
+			Serial.println("error");
+			break;
+		case adbms6830::BMSStatus::kTimeout:
+			Serial.println("timeout");
+			break;
+		case adbms6830::BMSStatus::kPecError:
+			Serial.println("pec error");
+			break;
+	}
+}
+
+bool ReadBMS::initializeConnectedModules(adbms6830::BMSInterface& bmsInterface,
+                                         std::array<ModuleState, kModuleCount>& moduleStates,
+                                         std::size_t detectedModuleCount,
+                                         const char* chainName) {
+	bmsInterface.setModuleCount(detectedModuleCount);
+
+	const adbms6830::BMSStatus initStatus = bmsInterface.initializeControlRegisters();
+	const bool initOk = initStatus == adbms6830::BMSStatus::kOk;
+	if (!initOk) {
+		reportChainError(chainName, "initializeControlRegisters", initStatus);
+	}
+
+	const adbms6830::BMSStatus clearStatus = bmsInterface.clearDiagnosticFlags();
+	const bool clearOk = clearStatus == adbms6830::BMSStatus::kOk;
+	if (!clearOk) {
+		reportChainError(chainName, "clearDiagnosticFlags", clearStatus);
+	}
+
+	for (std::size_t moduleIndex = 0; moduleIndex < detectedModuleCount; ++moduleIndex) {
+		ModuleState& state = moduleStates[moduleIndex];
+		if (!state.connected) {
+			continue;
+		}
+		state.initialized = true;
+		state.initializationError = !initOk;
+		state.diagnosticClearError = !clearOk;
+	}
+
+	if (initOk && clearOk) {
+		bmsInterface.readAllCellVoltages();
+		bmsInterface.readAllThermistors();
+	}
+
+	return initOk && clearOk;
+}
+
 void ReadBMS::configureSpiPins() const {
 	pinMode(ADBMS_AUX_CS, OUTPUT);
 	digitalWrite(ADBMS_AUX_CS, HIGH);
@@ -359,7 +417,8 @@ void ReadBMS::configureSpiPins() const {
 
 ReadBMS::ChainPollResult ReadBMS::pollChain(adbms6830::BMSInterface& bmsInterface,
                                             std::array<ModuleState, kModuleCount>& moduleStates,
-                                            std::size_t detectedModuleCount) const {
+                                            std::size_t detectedModuleCount,
+                                            const char* chainName) {
 	bmsInterface.setModuleCount(detectedModuleCount);
 
 	const adbms6830::BMSStatus cellStatus = bmsInterface.readAllCellVoltages();
@@ -367,8 +426,10 @@ ReadBMS::ChainPollResult ReadBMS::pollChain(adbms6830::BMSInterface& bmsInterfac
 	bmsInterface.readAllThermistors();
 
 	ChainPollResult result{};
+	bool requiresInitialization = false;
 	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
 		ModuleState& state = moduleStates[moduleIndex];
+		const bool wasConnected = state.connected;
 		const auto& module = bmsInterface.module(moduleIndex);
 		const bool cellSeen = cellReadUsable && module.dataValid && hasAnyValidCell(module);
 		const bool moduleSeen = cellSeen;
@@ -396,12 +457,23 @@ ReadBMS::ChainPollResult ReadBMS::pollChain(adbms6830::BMSInterface& bmsInterfac
 			}
 			if (state.missedCount >= kDisconnectDebounce) {
 				state.connected = false;
+				state.initialized = false;
+				state.initializationError = false;
+				state.diagnosticClearError = false;
 			}
 		}
+
+			if (state.connected && !wasConnected) {
+				requiresInitialization = true;
+			}
 
 		if (state.connected) {
 			++result.connectedModuleCount;
 		}
+	}
+
+	if (requiresInitialization && cellReadUsable) {
+		initializeConnectedModules(bmsInterface, moduleStates, detectedModuleCount, chainName);
 	}
 
 	return result;
@@ -412,6 +484,9 @@ void ReadBMS::clearChainStates(std::array<ModuleState, kModuleCount>& moduleStat
 		state.connected = false;
 		state.seenCount = 0;
 		state.missedCount = 0;
+		state.initialized = false;
+		state.initializationError = false;
+		state.diagnosticClearError = false;
 	}
 }
 
@@ -438,12 +513,12 @@ void ReadBMS::updatePollData() {
 		ModuleReadings& readings = pollData_.modules[logicalIndex];
 		if (readings.connected) {
 			continue;
-		}
+			}
 
-		copyModuleReadings(readings, auxBmsInterface_.module(auxIndex), true);
-		++pollData_.connectedModuleCount;
+			copyModuleReadings(readings, auxBmsInterface_.module(auxIndex), true);
+			++pollData_.connectedModuleCount;
+		}
 	}
-}
 
 bool ReadBMS::allConfiguredModulesHaveCells(adbms6830::BMSInterface& bmsInterface, std::size_t moduleCount) const {
 	for (std::size_t moduleIndex = 0; moduleIndex < moduleCount; ++moduleIndex) {

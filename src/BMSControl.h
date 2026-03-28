@@ -48,6 +48,9 @@ private:
 		bool connected = false;
 		uint8_t seenCount = 0;
 		uint8_t missedCount = 0;
+		bool initialized = false;
+		bool initializationError = false;
+		bool diagnosticClearError = false;
 	};
 
 	struct ChainPollResult {
@@ -72,11 +75,17 @@ private:
 	                      std::array<uint16_t, kModuleCount>& appliedMasks,
 	                      std::size_t moduleIndex,
 	                      uint16_t desiredMask);
+	void reportChainError(const char* chainName, const char* operation, adbms6830::BMSStatus status) const;
+	bool initializeConnectedModules(adbms6830::BMSInterface& bmsInterface,
+	                                std::array<ModuleState, kModuleCount>& moduleStates,
+	                                std::size_t detectedModuleCount,
+	                                const char* chainName);
 
 	void configureSpiPins() const;
 	ChainPollResult pollChain(adbms6830::BMSInterface& bmsInterface,
 	                          std::array<ModuleState, kModuleCount>& moduleStates,
-	                          std::size_t detectedModuleCount) const;
+	                          std::size_t detectedModuleCount,
+	                          const char* chainName);
 	void clearChainStates(std::array<ModuleState, kModuleCount>& moduleStates) const;
 	void updatePollData();
 	bool allConfiguredModulesHaveCells(adbms6830::BMSInterface& bmsInterface, std::size_t moduleCount) const;
