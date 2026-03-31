@@ -12,37 +12,52 @@ void ReadBMS::begin() {
 	configureSpiPins();
 	mainBmsInterface_.begin();
 	auxBmsInterface_.begin();
-	mainBmsInterface_.setModuleCount(detectedMainModuleCount_);
-	auxBmsInterface_.setModuleCount(detectedAuxModuleCount_);
+	runModuleDiscovery(true, false);
 }
 
 void ReadBMS::pollBMS() {
 	const uint32_t now = millis();
-	bool moduleCountChanged = false;
 	const ChainPollResult mainPoll = pollChain(mainBmsInterface_, mainModuleStates_, detectedMainModuleCount_, "main");
+	ChainPollResult auxPoll{};
 
-	if (mainPoll.missingConfiguredModule || (now - lastMainModuleScanMs_) >= kModuleScanIntervalMs) {
-		const std::size_t previousMainModuleCount = detectedMainModuleCount_;
-		detectedMainModuleCount_ = scanModuleCount(mainBmsInterface_);
-		moduleCountChanged = moduleCountChanged || (detectedMainModuleCount_ != previousMainModuleCount);
-		lastMainModuleScanMs_ = now;
-	}
-
-	if (mainPoll.connectedModuleCount < kModuleCount) {
-		const ChainPollResult auxPoll = pollChain(auxBmsInterface_, auxModuleStates_, detectedAuxModuleCount_, "aux");
-		if (auxPoll.missingConfiguredModule || (now - lastAuxModuleScanMs_) >= kModuleScanIntervalMs) {
-			const std::size_t previousAuxModuleCount = detectedAuxModuleCount_;
-			detectedAuxModuleCount_ = scanModuleCount(auxBmsInterface_);
-			moduleCountChanged = moduleCountChanged || (detectedAuxModuleCount_ != previousAuxModuleCount);
-			lastAuxModuleScanMs_ = now;
-		}
+	if (mainPoll.connectedModuleCount < kModuleCount && effectiveAuxModuleCount() > 0) {
+		auxPoll = pollChain(auxBmsInterface_, auxModuleStates_, detectedAuxModuleCount_, "aux");
 	} else {
 		clearChainStates(auxModuleStates_);
 	}
 
+	const bool forceRapidScan = startupRapidScanPassesRemaining_ > 0;
+	const bool discoveryDue = mainPoll.missingConfiguredModule ||
+	                          auxPoll.missingConfiguredModule ||
+	                          forceRapidScan ||
+	                          ((now - lastMainModuleScanMs_) >= kModuleScanIntervalMs) ||
+	                          ((now - lastAuxModuleScanMs_) >= kModuleScanIntervalMs);
+	if (discoveryDue) {
+		runModuleDiscovery(true, true);
+		if (forceRapidScan && startupRapidScanPassesRemaining_ > 0) {
+			--startupRapidScanPassesRemaining_;
+		}
+	}
+
 	updatePollData();
-	if (moduleCountChanged) {
-		logModuleSiliconIds();
+
+	if (pollData_.connectedModuleCount == 0) {
+		if (emptyRecoveryPollCount_ < kEmptyRecoveryPollThreshold) {
+			++emptyRecoveryPollCount_;
+		}
+		const bool recoveryCooldownElapsed = (now - lastRecoveryMs_) >= kRecoveryCooldownMs;
+		if (emptyRecoveryPollCount_ >= kEmptyRecoveryPollThreshold &&
+		    recoveryAttempts_ < kMaxRecoveryAttempts &&
+		    recoveryCooldownElapsed) {
+			recoverModuleDetection();
+			updatePollData();
+			emptyRecoveryPollCount_ = 0;
+			++recoveryAttempts_;
+			lastRecoveryMs_ = now;
+		}
+	} else {
+		emptyRecoveryPollCount_ = 0;
+		recoveryAttempts_ = 0;
 	}
 }
 
@@ -77,7 +92,7 @@ void ReadBMS::updateBalancing(bool enabled) {
 
 	for (std::size_t auxIndex = 0; auxIndex < kModuleCount; ++auxIndex) {
 		const std::size_t logicalIndex = (kModuleCount - 1u) - auxIndex;
-		if (auxModuleStates_[auxIndex].connected && !mainModuleStates_[logicalIndex].connected) {
+		if (shouldUseAuxModule(auxIndex) && !mainModuleStates_[logicalIndex].connected) {
 			applyBalanceMask(auxBmsInterface_, auxBalanceMasks_, auxIndex, pollData_.modules[logicalIndex].balanceMask);
 		} else {
 			applyBalanceMask(auxBmsInterface_, auxBalanceMasks_, auxIndex, 0);
@@ -261,10 +276,8 @@ void ReadBMS::printSiliconId(const adbms6830::BMSInterface::SiliconIdReadback& s
 }
 
 void ReadBMS::logModuleSiliconIds() {
-	mainBmsInterface_.setModuleCount(detectedMainModuleCount_);
-	auxBmsInterface_.setModuleCount(detectedAuxModuleCount_);
-	mainBmsInterface_.readSiliconIds();
-	auxBmsInterface_.readSiliconIds();
+	refreshSiliconIds(mainBmsInterface_, detectedMainModuleCount_, "main");
+	refreshSiliconIds(auxBmsInterface_, detectedAuxModuleCount_, "aux");
 
 	const auto& mainSiliconIds = mainBmsInterface_.siliconIdReadbacks();
 	const auto& auxSiliconIds = auxBmsInterface_.siliconIdReadbacks();
@@ -278,7 +291,7 @@ void ReadBMS::logModuleSiliconIds() {
 		}
 
 		const std::size_t auxIndex = (kModuleCount - 1u) - moduleIndex;
-		if (auxModuleStates_[auxIndex].connected && auxIndex < detectedAuxModuleCount_) {
+		if (shouldUseAuxModule(auxIndex)) {
 			printSiliconId(auxSiliconIds[auxIndex]);
 			continue;
 		}
@@ -498,14 +511,16 @@ void ReadBMS::updatePollData() {
 
 	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
 		const ModuleState& mainState = mainModuleStates_[moduleIndex];
-		if (mainState.connected) {
-			copyModuleReadings(pollData_.modules[moduleIndex], mainBmsInterface_.module(moduleIndex), true);
-			++pollData_.connectedModuleCount;
+		if (!mainState.connected) {
+			continue;
 		}
+
+		copyModuleReadings(pollData_.modules[moduleIndex], mainBmsInterface_.module(moduleIndex), true);
+		++pollData_.connectedModuleCount;
 	}
 
 	for (std::size_t auxIndex = 0; auxIndex < kModuleCount; ++auxIndex) {
-		if (!auxModuleStates_[auxIndex].connected) {
+		if (!shouldUseAuxModule(auxIndex)) {
 			continue;
 		}
 
@@ -513,12 +528,121 @@ void ReadBMS::updatePollData() {
 		ModuleReadings& readings = pollData_.modules[logicalIndex];
 		if (readings.connected) {
 			continue;
-			}
+		}
 
-			copyModuleReadings(readings, auxBmsInterface_.module(auxIndex), true);
-			++pollData_.connectedModuleCount;
+		copyModuleReadings(readings, auxBmsInterface_.module(auxIndex), true);
+		++pollData_.connectedModuleCount;
+	}
+}
+
+bool ReadBMS::refreshSiliconIds(adbms6830::BMSInterface& bmsInterface,
+                                std::size_t detectedModuleCount,
+                                const char* chainName) {
+	bmsInterface.setModuleCount(detectedModuleCount);
+	const adbms6830::BMSStatus status = bmsInterface.readSiliconIds();
+	if (status == adbms6830::BMSStatus::kOk || status == adbms6830::BMSStatus::kPecError) {
+		return true;
+	}
+
+	reportChainError(chainName, "readSiliconIds", status);
+	return false;
+}
+
+void ReadBMS::runModuleDiscovery(bool forceRescan, bool logChanges) {
+	bool moduleCountChanged = false;
+	bool overlapDetected = false;
+	if (forceRescan) {
+		const std::size_t previousMainModuleCount = detectedMainModuleCount_;
+		detectedMainModuleCount_ = scanModuleCount(mainBmsInterface_);
+		moduleCountChanged = moduleCountChanged || (detectedMainModuleCount_ != previousMainModuleCount);
+		lastMainModuleScanMs_ = millis();
+
+		const std::size_t previousAuxModuleCount = detectedAuxModuleCount_;
+		if (detectedMainModuleCount_ < kModuleCount) {
+			detectedAuxModuleCount_ = scanModuleCount(auxBmsInterface_);
+		} else {
+			detectedAuxModuleCount_ = 1;
+			clearChainStates(auxModuleStates_);
+		}
+		moduleCountChanged = moduleCountChanged || (detectedAuxModuleCount_ != previousAuxModuleCount);
+		lastAuxModuleScanMs_ = millis();
+	}
+
+	refreshSiliconIds(mainBmsInterface_, detectedMainModuleCount_, "main");
+	refreshSiliconIds(auxBmsInterface_, detectedAuxModuleCount_, "aux");
+
+	effectiveAuxModuleCount_ = detectedAuxModuleCount_;
+	for (std::size_t auxIndex = 0; auxIndex < detectedAuxModuleCount_; ++auxIndex) {
+		if (!isDuplicateAuxModule(auxIndex)) {
+			continue;
+		}
+
+		effectiveAuxModuleCount_ = auxIndex;
+		overlapDetected = true;
+		break;
+	}
+
+	if (overlapDetected) {
+		for (std::size_t auxIndex = effectiveAuxModuleCount_; auxIndex < kModuleCount; ++auxIndex) {
+			auxModuleStates_[auxIndex] = ModuleState{};
 		}
 	}
+
+	if ((moduleCountChanged || overlapDetected) && logChanges) {
+		logModuleSiliconIds();
+	}
+}
+
+void ReadBMS::recoverModuleDetection() {
+	Serial.println("bms recovery: resetting module discovery");
+	clearChainStates(mainModuleStates_);
+	clearChainStates(auxModuleStates_);
+	detectedMainModuleCount_ = 0;
+	detectedAuxModuleCount_ = 0;
+	mainBmsInterface_.begin();
+	auxBmsInterface_.begin();
+	startupRapidScanPassesRemaining_ = kStartupRapidScanPasses;
+	effectiveAuxModuleCount_ = 0;
+	runModuleDiscovery(true, true);
+}
+
+std::size_t ReadBMS::effectiveAuxModuleCount() const {
+	return effectiveAuxModuleCount_;
+}
+
+bool ReadBMS::siliconIdsMatch(const adbms6830::BMSInterface::SiliconIdReadback& lhs,
+                              const adbms6830::BMSInterface::SiliconIdReadback& rhs) const {
+	return lhs.valid && rhs.valid && lhs.value == rhs.value;
+}
+
+bool ReadBMS::shouldUseAuxModule(std::size_t auxIndex) const {
+	return auxIndex < effectiveAuxModuleCount_ &&
+	       auxModuleStates_[auxIndex].connected &&
+	       !isDuplicateAuxModule(auxIndex);
+}
+
+bool ReadBMS::isDuplicateAuxModule(std::size_t auxIndex) const {
+	if (auxIndex >= detectedAuxModuleCount_) {
+		return false;
+	}
+
+	const auto& auxSiliconId = auxBmsInterface_.siliconIdReadbacks()[auxIndex];
+	if (!auxSiliconId.valid) {
+		return false;
+	}
+
+	for (std::size_t mainIndex = 0; mainIndex < detectedMainModuleCount_; ++mainIndex) {
+		const auto& mainSiliconId = mainBmsInterface_.siliconIdReadbacks()[mainIndex];
+		if (!mainSiliconId.valid) {
+			continue;
+		}
+		if (siliconIdsMatch(mainSiliconId, auxSiliconId)) {
+			return true;
+		}
+	}
+
+	return false;
+}
 
 bool ReadBMS::allConfiguredModulesHaveCells(adbms6830::BMSInterface& bmsInterface, std::size_t moduleCount) const {
 	for (std::size_t moduleIndex = 0; moduleIndex < moduleCount; ++moduleIndex) {
@@ -531,7 +655,7 @@ bool ReadBMS::allConfiguredModulesHaveCells(adbms6830::BMSInterface& bmsInterfac
 }
 
 std::size_t ReadBMS::scanModuleCount(adbms6830::BMSInterface& bmsInterface) {
-	std::size_t bestCount = 1;
+	std::size_t bestCount = 0;
 	for (std::size_t candidate = 1; candidate <= kModuleCount; ++candidate) {
 		bmsInterface.setModuleCount(candidate);
 		const adbms6830::BMSStatus status = bmsInterface.readAllCellVoltages();

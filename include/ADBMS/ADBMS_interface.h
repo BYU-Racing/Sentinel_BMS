@@ -121,13 +121,20 @@ namespace adbms6830 {
 		}
 
 		void begin() { driver_.begin(); }
-		void setModuleCount(std::size_t moduleCount) { moduleCount_ = (moduleCount == 0 || moduleCount > kNumModules) ? 1 : moduleCount; }
+		void setModuleCount(std::size_t moduleCount) { moduleCount_ = (moduleCount > kNumModules) ? kNumModules : moduleCount; }
 		std::size_t moduleCount() const { return moduleCount_; }
 		const std::array<ModuleStatus, kNumModules>& moduleStatuses() const { return moduleStatuses_; }
 		const std::array<CfgaReadback, kNumModules>& cfgaReadbacks() const { return cfgaReadbacks_; }
 		const std::array<SiliconIdReadback, kNumModules>& siliconIdReadbacks() const { return siliconIds_; }
 
 		BMSStatus initializeControlRegisters() {
+			if (moduleCount_ == 0) {
+				for (auto& readback : cfgaReadbacks_) {
+					readback = {};
+				}
+				return BMSStatus::kOk;
+			}
+
 			constexpr std::size_t kDataBytes = 6;
 			constexpr std::size_t kPecBytes = 2;
 			constexpr std::size_t kResponseBytesPerModule = kDataBytes + kPecBytes;
@@ -180,6 +187,13 @@ namespace adbms6830 {
 		}
 
 		BMSStatus readStatus() {
+			if (moduleCount_ == 0) {
+				for (auto& moduleStatus : moduleStatuses_) {
+					moduleStatus = {};
+				}
+				return BMSStatus::kOk;
+			}
+
 			for (auto& moduleStatus : moduleStatuses_) {
 				moduleStatus = {};
 			}
@@ -213,6 +227,10 @@ namespace adbms6830 {
 		}
 
 		BMSStatus clearDiagnosticFlags() {
+			if (moduleCount_ == 0) {
+				return BMSStatus::kOk;
+			}
+
 			constexpr std::size_t kDataBytes = 6;
 			constexpr std::size_t kPecBytes = 2;
 			constexpr std::size_t kPayloadBytesPerModule = kDataBytes + kPecBytes;
@@ -255,6 +273,13 @@ namespace adbms6830 {
 		}
 
 		BMSStatus readSiliconIds() {
+			if (moduleCount_ == 0) {
+				for (auto& siliconId : siliconIds_) {
+					siliconId = {};
+				}
+				return BMSStatus::kOk;
+			}
+
 			constexpr std::size_t kDataBytes = 6;
 			constexpr std::size_t kPecBytes = 2;
 			constexpr std::size_t kResponseBytesPerModule = kDataBytes + kPecBytes;
@@ -289,6 +314,9 @@ namespace adbms6830 {
 
 		BMSStatus readAllCellVoltages() {
 			clearModuleData();
+			if (moduleCount_ == 0) {
+				return BMSStatus::kOk;
+			}
 
 			// While balancing, use RD=1 so PWM discharge is interrupted during conversion.
 			driver_.sendCommand(anyBalancingActive() ? CMD_ADCV_RD : CMD_ADCV);
@@ -494,6 +522,9 @@ namespace adbms6830 {
 
 		BMSStatus readAllThermistors() {
 			clearThermistorData();
+			if (moduleCount_ == 0) {
+				return BMSStatus::kOk;
+			}
 
 			driver_.sendCommand(CMD_ADAX);
 			uint32_t startMs = millis();
@@ -580,7 +611,7 @@ namespace adbms6830 {
 		std::array<CfgaReadback, kNumModules> cfgaReadbacks_{};
 		std::array<SiliconIdReadback, kNumModules> siliconIds_{};
 		std::array<uint16_t, kNumModules> balanceMasks_{};
-		std::size_t moduleCount_ = 1;
+		std::size_t moduleCount_ = 0;
 
 		static constexpr std::array<uint8_t, 6> defaultCfgaBytes() {
 			return {
