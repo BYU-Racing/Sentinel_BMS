@@ -1,8 +1,5 @@
 #include <Arduino.h>
 
-// Temporary override for field bring-up. Uncomment to relax BMS-only validation.
-#define SENTINEL_DANGEROUS_BMS_MODE
-
 #include "BMSControl.h"
 #include "CONSTANTS.h"
 #include "JboxIO.h"

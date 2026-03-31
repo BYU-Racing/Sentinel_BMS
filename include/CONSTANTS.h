@@ -9,6 +9,9 @@ namespace constants {
 	constexpr std::size_t kModuleCount = adbms6830::BMSInterface::kNumModules;
 	constexpr std::size_t kCellsPerModule = adbms6830::BMSInterface::kCellsPerModule;
 	constexpr std::size_t kThermistorsPerModule = 7;
+	constexpr std::size_t kMinValidThermistorsPerModule = 7;
+	static_assert(kMinValidThermistorsPerModule <= kThermistorsPerModule,
+	              "Minimum valid thermistor count must not exceed thermistors per module");
 
 	constexpr uint32_t kPollIntervalMs = 500;
 	constexpr uint32_t kLogIntervalMs = 2000;
