@@ -104,10 +104,21 @@ namespace adbms6830 {
 			delay(1);
 		}
 
-		uint16_t pollCommand(uint16_t command) {
-			uint8_t rxBuffer[2] = {0, 0};
-			sendCommandWithResponse(command, rxBuffer, sizeof(rxBuffer));
-			return static_cast<uint16_t>((rxBuffer[0] << 8) | rxBuffer[1]);
+		bool pollCommandComplete(uint16_t command, std::size_t stackDevices = 1) {
+			// In a daisy chain, the polling result is only valid after 2 * N SCK pulses,
+			// where N is the number of stacked devices. Read one additional bit so the
+			// completed state is observable on longer stacks.
+			const std::size_t clocksNeeded = (2u * stackDevices) + 1u;
+			const std::size_t rxLength = (clocksNeeded + 7u) / 8u;
+			uint8_t rxBuffer[3] = {0, 0, 0};
+			const std::size_t boundedRxLength = (rxLength > sizeof(rxBuffer)) ? sizeof(rxBuffer) : rxLength;
+			sendCommandWithResponse(command, rxBuffer, boundedRxLength);
+			for (std::size_t i = 0; i < boundedRxLength; ++i) {
+				if (rxBuffer[i] != 0u) {
+					return true;
+				}
+			}
+			return false;
 		}
 
 		static uint16_t calculatePEC15(const uint8_t* data, size_t length) {

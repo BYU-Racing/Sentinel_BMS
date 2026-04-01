@@ -529,8 +529,7 @@ namespace adbms6830 {
 			driver_.sendCommand(CMD_ADAX);
 			uint32_t startMs = millis();
 			while (true) {
-				uint16_t status = driver_.pollCommand(CMD_PLAUX);
-				if (status != 0x0000) {
+				if (driver_.pollCommandComplete(CMD_PLAUX, moduleCount_)) {
 					break;
 				}
 				if (millis() - startMs > kAuxPollTimeoutMs) {
