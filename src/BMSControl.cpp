@@ -100,11 +100,11 @@ void ReadBMS::updateBalancing(bool enabled) {
 	}
 }
 
-void ReadBMS::logBalancingState() const {
+void ReadBMS::logBalancingState(const LogSnapshot& snapshot, Stream& stream) {
 	bool anyBalancing = false;
-	Serial.print("balancing");
+	stream.print("balancing");
 	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
-		const ModuleReadings& module = pollData_.modules[moduleIndex];
+		const ModuleReadings& module = snapshot.pollData.modules[moduleIndex];
 		for (std::size_t cellIndex = 0; cellIndex < module.cellVoltages.size(); ++cellIndex) {
 			const uint16_t cellBit = static_cast<uint16_t>(1u << cellIndex);
 			if ((module.balanceMask & cellBit) == 0u) {
@@ -112,22 +112,22 @@ void ReadBMS::logBalancingState() const {
 			}
 
 			anyBalancing = true;
-			Serial.print(' ');
-			Serial.print(moduleIndex + 1);
-			Serial.print('-');
-			Serial.print(cellIndex + 1);
+			stream.print(' ');
+			stream.print(moduleIndex + 1);
+			stream.print('-');
+			stream.print(cellIndex + 1);
 		}
 	}
 
 	if (!anyBalancing) {
-		Serial.print(" off");
+		stream.print(" off");
 	}
-	Serial.println();
+	stream.println();
 }
 
-void ReadBMS::logConnectedModules() const {
+void ReadBMS::logConnectedModules(const LogSnapshot& snapshot, Stream& stream) {
 	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
-		const ModuleReadings& module = pollData_.modules[moduleIndex];
+		const ModuleReadings& module = snapshot.pollData.modules[moduleIndex];
 		if (!module.connected) {
 			continue;
 		}
@@ -135,51 +135,51 @@ void ReadBMS::logConnectedModules() const {
 		const AggregateStats cellStats = cellStatsForModule(module);
 		const AggregateStats thermStats = thermistorStatsForModule(module);
 
-		Serial.print("module ");
-		Serial.print(moduleIndex + 1);
-		Serial.print(" cells[mV] min=");
-		Serial.print(cellStats.minValue, 0);
-		Serial.print(" max=");
-		Serial.print(cellStats.maxValue, 0);
-		Serial.print(" avg=");
-		Serial.print(cellStats.avgValue, 1);
+		stream.print("module ");
+		stream.print(moduleIndex + 1);
+		stream.print(" cells[mV] min=");
+		stream.print(cellStats.minValue, 0);
+		stream.print(" max=");
+		stream.print(cellStats.maxValue, 0);
+		stream.print(" avg=");
+		stream.print(cellStats.avgValue, 1);
 
 		for (std::size_t cellIndex = 0; cellIndex < module.cellVoltages.size(); ++cellIndex) {
-			Serial.print(" C");
-			Serial.print(cellIndex + 1);
-			Serial.print(": ");
+			stream.print(" C");
+			stream.print(cellIndex + 1);
+			stream.print(": ");
 
 			const uint16_t cellMv = module.cellVoltages[cellIndex];
 			if (cellMv == adbms6830::BMSInterface::kInvalidCellValue) {
-				Serial.print("invalid");
+				stream.print("invalid");
 			} else {
-				Serial.print(cellMv);
+				stream.print(cellMv);
 			}
 		}
-		Serial.println();
+		stream.println();
 
-		Serial.print("module ");
-		Serial.print(moduleIndex + 1);
-		Serial.print(" temp[C] min=");
-		Serial.print(thermStats.minValue, 1);
-		Serial.print(" max=");
-		Serial.print(thermStats.maxValue, 1);
-		Serial.print(" avg=");
-		Serial.print(thermStats.avgValue, 1);
+		stream.print("module ");
+		stream.print(moduleIndex + 1);
+		stream.print(" temp[C] min=");
+		stream.print(thermStats.minValue, 1);
+		stream.print(" max=");
+		stream.print(thermStats.maxValue, 1);
+		stream.print(" avg=");
+		stream.print(thermStats.avgValue, 1);
 
 		for (std::size_t thermIndex = 0; thermIndex < kThermistorsPerModule; ++thermIndex) {
-			Serial.print(" T");
-			Serial.print(thermIndex + 1);
-			Serial.print(": ");
+			stream.print(" T");
+			stream.print(thermIndex + 1);
+			stream.print(": ");
 
 			const float tempC = module.thermistorTempsC[thermIndex];
 			if (isnan(tempC)) {
-				Serial.print("invalid");
+				stream.print("invalid");
 			} else {
-				Serial.print(tempC, 1);
+				stream.print(tempC, 1);
 			}
 		}
-		Serial.println();
+		stream.println();
 	}
 }
 
@@ -260,45 +260,49 @@ ReadBMS::AggregateStats ReadBMS::thermistorStatsForModule(const ModuleReadings& 
 	return stats;
 }
 
-void ReadBMS::printSiliconId(const adbms6830::BMSInterface::SiliconIdReadback& siliconId) {
+void ReadBMS::printSiliconId(Stream& stream, const adbms6830::BMSInterface::SiliconIdReadback& siliconId) {
 	if (!siliconId.valid) {
-		Serial.print('-');
+		stream.print('-');
 		return;
 	}
 
 	for (std::size_t byteIndex = siliconId.bytes.size(); byteIndex > 0; --byteIndex) {
 		const uint8_t value = siliconId.bytes[byteIndex - 1u];
 		if (value < 0x10u) {
-			Serial.print('0');
+			stream.print('0');
 		}
-		Serial.print(value, HEX);
+		stream.print(value, HEX);
 	}
 }
 
-void ReadBMS::logModuleSiliconIds() {
-	refreshSiliconIds(mainBmsInterface_, detectedMainModuleCount_, "main");
-	refreshSiliconIds(auxBmsInterface_, detectedAuxModuleCount_, "aux");
+ReadBMS::LogSnapshot ReadBMS::captureLogSnapshot() const {
+	LogSnapshot snapshot{};
+	snapshot.pollData = pollData_;
 
 	const auto& mainSiliconIds = mainBmsInterface_.siliconIdReadbacks();
 	const auto& auxSiliconIds = auxBmsInterface_.siliconIdReadbacks();
-
-	Serial.print("module silicon ids:");
 	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
-		Serial.print(' ');
 		if (mainModuleStates_[moduleIndex].connected && moduleIndex < detectedMainModuleCount_) {
-			printSiliconId(mainSiliconIds[moduleIndex]);
+			snapshot.moduleSiliconIds[moduleIndex] = mainSiliconIds[moduleIndex];
 			continue;
 		}
 
 		const std::size_t auxIndex = (kModuleCount - 1u) - moduleIndex;
 		if (shouldUseAuxModule(auxIndex)) {
-			printSiliconId(auxSiliconIds[auxIndex]);
-			continue;
+			snapshot.moduleSiliconIds[moduleIndex] = auxSiliconIds[auxIndex];
 		}
-
-		Serial.print('-');
 	}
-	Serial.println();
+
+	return snapshot;
+}
+
+void ReadBMS::logModuleSiliconIds(const LogSnapshot& snapshot, Stream& stream) {
+	stream.print("module silicon ids:");
+	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
+		stream.print(' ');
+		printSiliconId(stream, snapshot.moduleSiliconIds[moduleIndex]);
+	}
+	stream.println();
 }
 
 uint16_t ReadBMS::balanceMaskForModule(const ModuleReadings& module, uint16_t currentMask) {
@@ -589,7 +593,7 @@ void ReadBMS::runModuleDiscovery(bool forceRescan, bool logChanges) {
 	}
 
 	if ((moduleCountChanged || overlapDetected) && logChanges) {
-		logModuleSiliconIds();
+		logModuleSiliconIds(captureLogSnapshot(), Serial);
 	}
 }
 

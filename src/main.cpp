@@ -1,10 +1,13 @@
 #include <Arduino.h>
+#include <pico/mutex.h>
 
 #include "BMSControl.h"
 #include "CONSTANTS.h"
 #include "JboxIO.h"
 #include "LEDControl.h"
 #include "SystemStatus.h"
+
+bool core1_separate_stack = true;
 
 namespace {
 	// Shared runtime objects are kept here so the Arduino entrypoints remain small and
@@ -20,9 +23,13 @@ namespace {
 	uint32_t lastPollMs = 0;
 	uint32_t lastLogMs = 0;
 	uint8_t logCycleCount = 0;
+	mutex_t gBmsDataMutex;
+	volatile bool gBmsDataReady = false;
 } // namespace
 
 void setup() {
+	mutex_init(&gBmsDataMutex);
+
 	// Initialize the BMS interface
 	readBms.begin();
 
@@ -34,6 +41,8 @@ void setup() {
 
 	// Show the default startup state immediately on the LEDs
 	ledControl.update(gSystemStatuses);
+
+	gBmsDataReady = true;
 }
 
 void loop() {
@@ -44,8 +53,11 @@ void loop() {
 	// could later reuse the same raw snapshot without coupling to critical status logic.
 	if (now - lastPollMs >= constants::kPollIntervalMs) {
 		lastPollMs = now;
+		SystemStatuses statusesForOutput{};
 
 		// TODO read drive and charge enable pin - Not sure how this effects status yet
+
+		mutex_enter_blocking(&gBmsDataMutex);
 
 		// Poll the slave boards, and get the latest readings
 		readBms.pollBMS();
@@ -57,12 +69,15 @@ void loop() {
 
 		// Parse the readings in to basic statuses
 		updateStatusesFromBmsData(readBms.data(), gSystemStatuses);
+		statusesForOutput = gSystemStatuses;
+
+		mutex_exit(&gBmsDataMutex);
 
 		// Set BMS_STATUS_OUTPUT, pull low if everything is good
-		jbox.setStatus(gSystemStatuses.BMS);
+		jbox.setStatus(statusesForOutput.BMS);
 
 		// Render the current statuses to the LED strip
-		ledControl.update(gSystemStatuses);
+		ledControl.update(statusesForOutput);
 	}
 
 
@@ -75,6 +90,10 @@ void setup1() {
 
 void loop1() {
 	const uint32_t now = millis();
+	if (!gBmsDataReady) {
+		return;
+	}
+
 	while (Serial.available() > 0) {
 		const char ch = static_cast<char>(Serial.read());
 		if (ch == '\r') {
@@ -100,20 +119,28 @@ void loop1() {
 	if (now - lastLogMs >= constants::kLogIntervalMs) {
 		lastLogMs = now;
 		++logCycleCount;
+		SystemStatuses statusesSnapshot{};
+		ReadBMS::LogSnapshot bmsSnapshot{};
+		const bool logSiliconIds = logCycleCount >= 4u;
+
+		mutex_enter_blocking(&gBmsDataMutex);
+		statusesSnapshot = gSystemStatuses;
+		bmsSnapshot = readBms.captureLogSnapshot();
+		mutex_exit(&gBmsDataMutex);
 
 		Serial.print("status BMS: ");
-		Serial.println(statusModeName(gSystemStatuses.BMS));
+		Serial.println(statusModeName(statusesSnapshot.BMS));
 		Serial.print("status board: ");
-		Serial.println(statusModeName(gSystemStatuses.board));
+		Serial.println(statusModeName(statusesSnapshot.board));
 		Serial.print("status voltage: ");
-		Serial.println(statusModeName(gSystemStatuses.voltage));
+		Serial.println(statusModeName(statusesSnapshot.voltage));
 		Serial.print("status temp: ");
-		Serial.println(statusModeName(gSystemStatuses.temp));
-		readBms.logBalancingState();
+		Serial.println(statusModeName(statusesSnapshot.temp));
+		ReadBMS::logBalancingState(bmsSnapshot, Serial);
 
-		readBms.logConnectedModules();
-		if (logCycleCount >= 4u) {
-			readBms.logModuleSiliconIds();
+		ReadBMS::logConnectedModules(bmsSnapshot, Serial);
+		if (logSiliconIds) {
+			ReadBMS::logModuleSiliconIds(bmsSnapshot, Serial);
 			logCycleCount = 0;
 		}
 	}

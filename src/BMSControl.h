@@ -27,15 +27,21 @@ public:
 		std::array<ModuleReadings, constants::kModuleCount> modules{};
 	};
 
+	struct LogSnapshot {
+		PollData pollData{};
+		std::array<adbms6830::BMSInterface::SiliconIdReadback, constants::kModuleCount> moduleSiliconIds{};
+	};
+
 	ReadBMS();
 
 	void begin();
 	void pollBMS();
 	void updateBalancing(bool enabled);
 	const PollData& data() const;
-	void logBalancingState() const;
-	void logConnectedModules() const;
-	void logModuleSiliconIds();
+	LogSnapshot captureLogSnapshot() const;
+	static void logBalancingState(const LogSnapshot& snapshot, Stream& stream);
+	static void logConnectedModules(const LogSnapshot& snapshot, Stream& stream);
+	static void logModuleSiliconIds(const LogSnapshot& snapshot, Stream& stream);
 
 private:
 	static constexpr std::size_t kModuleCount = constants::kModuleCount;
@@ -74,7 +80,7 @@ private:
 	static AggregateStats cellStatsForModule(const ModuleReadings& module);
 	static AggregateStats thermistorStatsForModule(const ModuleReadings& module);
 	static uint16_t balanceMaskForModule(const ModuleReadings& module, uint16_t currentMask);
-	static void printSiliconId(const adbms6830::BMSInterface::SiliconIdReadback& siliconId);
+	static void printSiliconId(Stream& stream, const adbms6830::BMSInterface::SiliconIdReadback& siliconId);
 	void applyBalanceMask(adbms6830::BMSInterface& bmsInterface,
 	                      std::array<uint16_t, kModuleCount>& appliedMasks,
 	                      std::size_t moduleIndex,
