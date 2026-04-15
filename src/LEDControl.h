@@ -12,10 +12,11 @@ public:
 	static constexpr std::size_t kLedCount = constants::kLedCount;
 
 	void begin();
-	void update(const SystemStatuses& statuses);
+	void update(const SystemStatuses& statuses, bool balancingEnabled = false);
 
 private:
 	static constexpr uint8_t kLedBrightness = constants::kLedBrightness;
+	static constexpr uint32_t kBalanceBlinkPeriodMs = 500;
 
 	static CRGB toColor(StatusMode mode);
 

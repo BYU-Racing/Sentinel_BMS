@@ -40,7 +40,7 @@ void setup() {
 	ledControl.begin();
 
 	// Show the default startup state immediately on the LEDs
-	ledControl.update(gSystemStatuses);
+	ledControl.update(gSystemStatuses, balancingOn);
 
 	gBmsDataReady = true;
 }
@@ -77,7 +77,7 @@ void loop() {
 		jbox.setStatus(statusesForOutput.BMS);
 
 		// Render the current statuses to the LED strip
-		ledControl.update(statusesForOutput);
+		ledControl.update(statusesForOutput, balancingOn);
 	}
 
 
