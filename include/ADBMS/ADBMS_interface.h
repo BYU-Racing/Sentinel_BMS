@@ -38,6 +38,7 @@ namespace adbms6830 {
 		static constexpr std::size_t kGpioPerModule = 10;
 		static constexpr uint16_t kInvalidCellValue = 0xFFFF;
 		static constexpr uint16_t kConversionDelayMs = 10;
+		static constexpr uint32_t kCellPollTimeoutMs = 25;
 		static constexpr uint32_t kCellOffsetMicroVolts = 1500000;
 		static constexpr uint32_t kCellLsbMicroVolts = 150;
 		static constexpr uint16_t kInvalidThermistorValue = 0xFFFF;
@@ -158,11 +159,11 @@ namespace adbms6830 {
 				modulePayload[kDataBytes + 1u] = static_cast<uint8_t>(dataPec & 0xFFu);
 			}
 
-			driver_.sendWriteCommand(CMD_WRCFGA, payload.data(), moduleCount_ * kPayloadBytesPerModule);
+			driver_.sendWriteCommand(CMD_WRCFGA, payload.data(), moduleCount_ * kPayloadBytesPerModule, moduleCount_);
 
 			std::array<uint8_t, kNumModules * kResponseBytesPerModule> rxBuffer{};
 			const std::size_t rxLength = moduleCount_ * kResponseBytesPerModule;
-			driver_.sendCommandWithResponse(CMD_RDCFGA, rxBuffer.data(), rxLength);
+			driver_.sendCommandWithResponse(CMD_RDCFGA, rxBuffer.data(), rxLength, moduleCount_);
 
 			const std::array<uint8_t, kDataBytes> expected = defaultCfgaBytes();
 			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
@@ -257,7 +258,7 @@ namespace adbms6830 {
 				modulePayload[kDataBytes + 1u] = static_cast<uint8_t>(dataPec & 0xFFu);
 			}
 
-			driver_.sendWriteCommand(CMD_CLRFLAG, payload.data(), moduleCount_ * kPayloadBytesPerModule);
+			driver_.sendWriteCommand(CMD_CLRFLAG, payload.data(), moduleCount_ * kPayloadBytesPerModule, moduleCount_);
 			const BMSStatus status = readStatus();
 			if (status != BMSStatus::kOk) {
 				return status;
@@ -290,7 +291,7 @@ namespace adbms6830 {
 
 			std::array<uint8_t, kNumModules * kResponseBytesPerModule> rxBuffer{};
 			const std::size_t rxLength = moduleCount_ * kResponseBytesPerModule;
-			driver_.sendCommandWithResponse(CMD_RDSID, rxBuffer.data(), rxLength);
+			driver_.sendCommandWithResponse(CMD_RDSID, rxBuffer.data(), rxLength, moduleCount_);
 
 			bool pecFailure = false;
 			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
@@ -319,8 +320,17 @@ namespace adbms6830 {
 			}
 
 			// While balancing, use RD=1 so PWM discharge is interrupted during conversion.
-			driver_.sendCommand(anyBalancingActive() ? CMD_ADCV_RD : CMD_ADCV);
-			delay(kConversionDelayMs);
+			driver_.sendCommand(anyBalancingActive() ? CMD_ADCV_RD : CMD_ADCV, moduleCount_);
+			uint32_t startMs = millis();
+			while (true) {
+				if (driver_.pollCommandComplete(CMD_PLCADC, moduleCount_)) {
+					break;
+				}
+				if (millis() - startMs > kCellPollTimeoutMs) {
+					delay(kConversionDelayMs);
+					break;
+				}
+			}
 
 			constexpr std::size_t kDataBytes = 6;
 			constexpr std::size_t kPecBytes = 2;
@@ -333,7 +343,7 @@ namespace adbms6830 {
 
 			for (std::size_t groupIndex = 0; groupIndex < kCellCommands.size(); ++groupIndex) {
 				uint16_t command = kCellCommands[groupIndex];
-				driver_.sendCommandWithResponse(command, rxBuffer.data(), rxLength);
+				driver_.sendCommandWithResponse(command, rxBuffer.data(), rxLength, moduleCount_);
 				logSpiResponse(command, rxBuffer.data(), rxLength);
 
 				for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
@@ -409,7 +419,7 @@ namespace adbms6830 {
 			bool pecFailure = false;
 			const std::size_t rxLength = moduleCount_ * kResponseBytesPerModule;
 
-			driver_.sendCommandWithResponse(CMD_RDPWMA, rxBuffer.data(), rxLength);
+			driver_.sendCommandWithResponse(CMD_RDPWMA, rxBuffer.data(), rxLength, moduleCount_);
 			for (std::size_t module = 0; module < moduleCount_; ++module) {
 				uint8_t* moduleBytes = rxBuffer.data() + module * kResponseBytesPerModule;
 				uint8_t* pecBytes = moduleBytes + kDataBytes;
@@ -424,7 +434,7 @@ namespace adbms6830 {
 				}
 			}
 
-			driver_.sendCommandWithResponse(CMD_RDPWMB, rxBuffer.data(), rxLength);
+			driver_.sendCommandWithResponse(CMD_RDPWMB, rxBuffer.data(), rxLength, moduleCount_);
 			for (std::size_t module = 0; module < moduleCount_; ++module) {
 				uint8_t* moduleBytes = rxBuffer.data() + module * kResponseBytesPerModule;
 				uint8_t* pecBytes = moduleBytes + kDataBytes;
@@ -460,7 +470,7 @@ namespace adbms6830 {
 			std::array<uint8_t, kNumModules * kResponseBytesPerModule> rxBuffer{};
 			const std::size_t rxLength = moduleCount_ * kResponseBytesPerModule;
 
-			driver_.sendCommandWithResponse(CMD_RDCFGB, rxBuffer.data(), rxLength);
+			driver_.sendCommandWithResponse(CMD_RDCFGB, rxBuffer.data(), rxLength, moduleCount_);
 			for (std::size_t module = 0; module < moduleCount_; ++module) {
 				uint8_t* moduleBytes = rxBuffer.data() + module * kResponseBytesPerModule;
 				uint8_t* pecBytes = moduleBytes + kDataBytes;
@@ -526,7 +536,7 @@ namespace adbms6830 {
 				return BMSStatus::kOk;
 			}
 
-			driver_.sendCommand(CMD_ADAX);
+			driver_.sendCommand(CMD_ADAX, moduleCount_);
 			uint32_t startMs = millis();
 			while (true) {
 				if (driver_.pollCommandComplete(CMD_PLAUX, moduleCount_)) {
@@ -548,7 +558,7 @@ namespace adbms6830 {
 
 			for (std::size_t groupIndex = 0; groupIndex < kAuxCommands.size(); ++groupIndex) {
 				uint16_t command = kAuxCommands[groupIndex];
-				driver_.sendCommandWithResponse(command, rxBuffer.data(), rxLength);
+				driver_.sendCommandWithResponse(command, rxBuffer.data(), rxLength, moduleCount_);
 				logSpiResponse(command, rxBuffer.data(), rxLength);
 
 				for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
@@ -708,7 +718,7 @@ namespace adbms6830 {
 
 			std::array<uint8_t, kNumModules * kResponseBytesPerModule> rxBuffer{};
 			const std::size_t rxLength = moduleCount_ * kResponseBytesPerModule;
-			driver_.sendCommandWithResponse(command, rxBuffer.data(), rxLength);
+			driver_.sendCommandWithResponse(command, rxBuffer.data(), rxLength, moduleCount_);
 
 			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
 				const uint8_t* moduleBytes = rxBuffer.data() + moduleIndex * kResponseBytesPerModule;
@@ -754,7 +764,7 @@ namespace adbms6830 {
 				modulePayload[kDataBytes + 1u] = static_cast<uint8_t>(dataPec & 0xFFu);
 			}
 
-			driver_.sendWriteCommand(command, payload.data(), moduleCount_ * kPayloadBytesPerModule);
+			driver_.sendWriteCommand(command, payload.data(), moduleCount_ * kPayloadBytesPerModule, moduleCount_);
 		}
 
 		BMSStatus writeBalancingRegisters() {
@@ -784,7 +794,7 @@ namespace adbms6830 {
 
 			std::array<uint8_t, kNumModules * kResponseBytesPerModule> rxBuffer{};
 			const std::size_t rxLength = moduleCount_ * kResponseBytesPerModule;
-			driver_.sendCommandWithResponse(CMD_RDCFGB, rxBuffer.data(), rxLength);
+			driver_.sendCommandWithResponse(CMD_RDCFGB, rxBuffer.data(), rxLength, moduleCount_);
 
 			std::array<uint8_t, kNumModules * kPayloadBytesPerModule> payload{};
 			for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
@@ -817,8 +827,8 @@ namespace adbms6830 {
 			}
 
 			auto cfgbWriteAccepted = [&]() -> bool {
-				driver_.sendWriteCommand(CMD_WRCFGB, payload.data(), moduleCount_ * kPayloadBytesPerModule);
-				driver_.sendCommandWithResponse(CMD_RDCFGB, rxBuffer.data(), rxLength);
+				driver_.sendWriteCommand(CMD_WRCFGB, payload.data(), moduleCount_ * kPayloadBytesPerModule, moduleCount_);
+				driver_.sendCommandWithResponse(CMD_RDCFGB, rxBuffer.data(), rxLength, moduleCount_);
 				for (std::size_t moduleIndex = 0; moduleIndex < moduleCount_; ++moduleIndex) {
 					const uint8_t* moduleBytes = rxBuffer.data() + moduleIndex * kResponseBytesPerModule;
 					const uint8_t* pecBytes = moduleBytes + kDataBytes;

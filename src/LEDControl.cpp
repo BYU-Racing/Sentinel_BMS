@@ -1,5 +1,7 @@
 #include "LEDControl.h"
 
+#include <Arduino.h>
+
 #include "PINS.h"
 
 void LEDControl::begin() {
@@ -8,13 +10,16 @@ void LEDControl::begin() {
 	FastLED.clear(true);
 }
 
-void LEDControl::update(const SystemStatuses& statuses) {
+void LEDControl::update(const SystemStatuses& statuses, bool balancingEnabled) {
 	leds_[0] = toColor(statuses.BMS);
-	leds_[1] = toColor(statuses.voltage);
-	leds_[2] = toColor(statuses.temp);
+	const CRGB boardColor = toColor(statuses.board);
+	const bool boardLedVisible = !balancingEnabled || ((millis() / kBalanceBlinkPeriodMs) % 2u == 0u);
+	leds_[1] = boardLedVisible ? boardColor : CRGB::Black;
+	leds_[2] = toColor(statuses.voltage);
+	leds_[3] = toColor(statuses.temp);
 
 	for (std::size_t moduleIndex = 0; moduleIndex < statuses.moduleStatuses.size(); ++moduleIndex) {
-		leds_[moduleIndex + 3] = toColor(statuses.moduleStatuses[moduleIndex]);
+		leds_[moduleIndex + 4] = toColor(statuses.moduleStatuses[moduleIndex]);
 	}
 
 	FastLED.show();

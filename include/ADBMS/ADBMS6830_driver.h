@@ -21,9 +21,11 @@ namespace adbms6830 {
 			spi_.begin();
 		}
 
-		void wakeupIdle() {
-			// Robust wakeup sequence: two long pulses separated by >tREADY/tWAKE and <tIDLE.
-			for (int i = 0; i < 2; ++i) {
+		void wakeupIdle(std::size_t stackDevices = 1) {
+			// Datasheet guidance for a robust daisy-chain wakeup requires one pair of
+			// long pulses per device, spaced by >tREADY/tWAKE and <tIDLE.
+			const std::size_t pulseCount = (stackDevices == 0u) ? 2u : (2u * stackDevices);
+			for (std::size_t i = 0; i < pulseCount; ++i) {
 				beginTransaction();
 				csLow();
 				spi_.transfer(0xFF);
@@ -33,8 +35,8 @@ namespace adbms6830 {
 			}
 		}
 
-		void sendCommand(uint16_t command) {
-			wakeupIdle();
+		void sendCommand(uint16_t command, std::size_t stackDevices = 1) {
+			wakeupIdle(stackDevices);
 			uint8_t cmdBytes[2] = {
 				static_cast<uint8_t>((command >> 8) & 0xFF),
 				static_cast<uint8_t>(command & 0xFF)
@@ -52,12 +54,13 @@ namespace adbms6830 {
 			delay(1);
 		}
 
-		void sendWriteCommand(uint16_t command, const uint8_t* txData, size_t txLength) {
+		void sendWriteCommand(uint16_t command, const uint8_t* txData, size_t txLength,
+		                      std::size_t stackDevices = 1) {
 			if (txData == nullptr || txLength == 0) {
 				return;
 			}
 
-			wakeupIdle();
+			wakeupIdle(stackDevices);
 			uint8_t cmdBytes[2] = {
 				static_cast<uint8_t>((command >> 8) & 0xFF),
 				static_cast<uint8_t>(command & 0xFF)
@@ -78,12 +81,13 @@ namespace adbms6830 {
 			delay(1);
 		}
 
-		void sendCommandWithResponse(uint16_t command, uint8_t* rxBuffer, size_t rxLength) {
+		void sendCommandWithResponse(uint16_t command, uint8_t* rxBuffer, size_t rxLength,
+		                             std::size_t stackDevices = 1) {
 			if (rxBuffer == nullptr || rxLength == 0) {
 				return;
 			}
 
-			wakeupIdle();
+			wakeupIdle(stackDevices);
 			uint8_t cmdBytes[2] = {
 				static_cast<uint8_t>((command >> 8) & 0xFF),
 				static_cast<uint8_t>(command & 0xFF)
@@ -112,7 +116,7 @@ namespace adbms6830 {
 			const std::size_t rxLength = (clocksNeeded + 7u) / 8u;
 			uint8_t rxBuffer[3] = {0, 0, 0};
 			const std::size_t boundedRxLength = (rxLength > sizeof(rxBuffer)) ? sizeof(rxBuffer) : rxLength;
-			sendCommandWithResponse(command, rxBuffer, boundedRxLength);
+			sendCommandWithResponse(command, rxBuffer, boundedRxLength, stackDevices);
 			for (std::size_t i = 0; i < boundedRxLength; ++i) {
 				if (rxBuffer[i] != 0u) {
 					return true;

@@ -14,6 +14,7 @@ namespace adbms6830 {
 	constexpr uint16_t CMD_ADCV = 0x0260; // Start cell voltage conversion
 	constexpr uint16_t CMD_ADCV_RD = 0x0360; // Start redundant cell conversion (RD=1, CONT=0, DCP=0)
 	constexpr uint16_t CMD_ADAX = 0x0490; // Start AUX ADC conversion (GPIOs)
+	constexpr uint16_t CMD_PLCADC = 0x071C; // Poll C-ADC status
 	constexpr uint16_t CMD_PLAUX = 0x071E; // Poll AUX ADC status
 	constexpr uint16_t CMD_RDAUXA = 0x0019; // Read GPIO1-3
 	constexpr uint16_t CMD_RDAUXB = 0x001A; // Read GPIO4-6

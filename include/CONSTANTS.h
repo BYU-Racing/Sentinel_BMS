@@ -9,7 +9,7 @@ namespace constants {
 	constexpr std::size_t kModuleCount = adbms6830::BMSInterface::kNumModules;
 	constexpr std::size_t kCellsPerModule = adbms6830::BMSInterface::kCellsPerModule;
 	constexpr std::size_t kThermistorsPerModule = 7;
-	constexpr std::size_t kMinValidThermistorsPerModule = 7;
+	constexpr std::size_t kMinValidThermistorsPerModule = 6;
 	static_assert(kMinValidThermistorsPerModule <= kThermistorsPerModule,
 	              "Minimum valid thermistor count must not exceed thermistors per module");
 
@@ -26,8 +26,9 @@ namespace constants {
 	constexpr uint16_t kCellVoltageGoodMaxMv = 4150;
 	constexpr uint16_t kCellVoltageWarningMaxMv = 4200;
 	constexpr uint16_t kCellVoltageErrorMaxMv = 4250;
+
 	constexpr uint16_t kBalanceThresholdMv = 50;
-	constexpr uint16_t kBalanceDisableDeltaMv = 0;
+	constexpr uint16_t kBalanceDisableDeltaMv = 5;
 	constexpr uint16_t kBalanceMaxCellMv = 5500;
 
 	constexpr float kTempWarningMinC = 5.0f;
@@ -35,6 +36,6 @@ namespace constants {
 	constexpr float kTempWarningMaxC = 60.0f;
 	constexpr float kTempExhaustedMaxC = 70.0f;
 
-	constexpr std::size_t kLedCount = 12;
+	constexpr std::size_t kLedCount = 13;
 	constexpr uint8_t kLedBrightness = 32;
 } // namespace constants
