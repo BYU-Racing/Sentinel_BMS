@@ -119,7 +119,7 @@ inline StatusMode evaluateTempStatus(const ModuleReadings& module) {
 	std::size_t validThermistorCount = 0;
 	StatusMode aggregateTempStatus = StatusMode::GOOD;
 
-	for (std::size_t i = 0; i < constants::kThermistorsPerModule; ++i) {
+	for (std::size_t i = 0; i < constants::kMonitoredThermistorsPerModule; ++i) {
 		const float tempC = module.thermistorTempsC[i];
 		StatusMode thermistorStatus = StatusMode::BAD_DATA;
 
@@ -142,6 +142,11 @@ inline StatusMode evaluateTempStatus(const ModuleReadings& module) {
 
 	if (validThermistorCount < constants::kMinValidThermistorsPerModule) {
 		return StatusMode::BAD_DATA;
+	}
+
+	const float boardThermistorTempC = module.thermistorTempsC[constants::kBoardThermistorIndex];
+	if (!isnan(boardThermistorTempC) && boardThermistorTempC > constants::kBoardThermistorFaultMinC) {
+		return StatusMode::ERROR;
 	}
 
 	return aggregateTempStatus;

@@ -46,6 +46,8 @@ public:
 private:
 	static constexpr std::size_t kModuleCount = constants::kModuleCount;
 	static constexpr std::size_t kThermistorsPerModule = constants::kThermistorsPerModule;
+	static constexpr std::size_t kMonitoredThermistorsPerModule = constants::kMonitoredThermistorsPerModule;
+	static constexpr std::size_t kBoardThermistorIndex = constants::kBoardThermistorIndex;
 	static constexpr uint32_t kModuleScanIntervalMs = constants::kModuleScanIntervalMs;
 	static constexpr uint8_t kConnectDebounce = constants::kConnectDebounce;
 	static constexpr uint8_t kDisconnectDebounce = constants::kDisconnectDebounce;
@@ -79,6 +81,7 @@ private:
 	static bool hasAnyValidThermistor(const adbms6830::BMSInterface::ModuleData& module);
 	static AggregateStats cellStatsForModule(const ModuleReadings& module);
 	static AggregateStats thermistorStatsForModule(const ModuleReadings& module);
+	static bool boardThermistorFaulted(const ModuleReadings& module);
 	static uint16_t balanceMaskForModule(const ModuleReadings& module, uint16_t currentMask);
 	static void printSiliconId(Stream& stream, const adbms6830::BMSInterface::SiliconIdReadback& siliconId);
 	void applyBalanceMask(adbms6830::BMSInterface& bmsInterface,

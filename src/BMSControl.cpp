@@ -197,7 +197,7 @@ bool ReadBMS::hasAnyValidCell(const adbms6830::BMSInterface::ModuleData& module)
 }
 
 bool ReadBMS::hasAnyValidThermistor(const adbms6830::BMSInterface::ModuleData& module) {
-	for (std::size_t i = 0; i < kThermistorsPerModule; ++i) {
+	for (std::size_t i = 0; i < kMonitoredThermistorsPerModule; ++i) {
 		if (!isnan(module.thermistorTempsC[i])) {
 			return true;
 		}
@@ -238,7 +238,7 @@ ReadBMS::AggregateStats ReadBMS::thermistorStatsForModule(const ModuleReadings& 
 	float maxValue = -INFINITY;
 	std::size_t count = 0;
 
-	for (std::size_t i = 0; i < kThermistorsPerModule; ++i) {
+	for (std::size_t i = 0; i < kMonitoredThermistorsPerModule; ++i) {
 		const float tempC = module.thermistorTempsC[i];
 		if (isnan(tempC)) {
 			continue;
@@ -258,6 +258,12 @@ ReadBMS::AggregateStats ReadBMS::thermistorStatsForModule(const ModuleReadings& 
 	stats.maxValue = (count > 0) ? maxValue : NAN;
 	stats.avgValue = (count > 0) ? (total / static_cast<float>(count)) : NAN;
 	return stats;
+}
+
+// Check the board thermistors seperate from the ones on the cells
+bool ReadBMS::boardThermistorFaulted(const ModuleReadings& module) {
+	const float tempC = module.thermistorTempsC[kBoardThermistorIndex];
+	return !isnan(tempC) && tempC > constants::kBoardThermistorFaultMinC;
 }
 
 void ReadBMS::printSiliconId(Stream& stream, const adbms6830::BMSInterface::SiliconIdReadback& siliconId) {
@@ -307,6 +313,9 @@ void ReadBMS::logModuleSiliconIds(const LogSnapshot& snapshot, Stream& stream) {
 
 uint16_t ReadBMS::balanceMaskForModule(const ModuleReadings& module, uint16_t currentMask) {
 	if (!module.connected || !module.cellDataValid) {
+		return 0;
+	}
+	if (boardThermistorFaulted(module)) {
 		return 0;
 	}
 
