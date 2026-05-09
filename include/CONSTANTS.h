@@ -23,6 +23,11 @@ namespace constants {
 	constexpr uint32_t kLogIntervalMs = 2000;
 	constexpr uint32_t kModuleScanIntervalMs = 2000;
 
+	constexpr uint32_t kCanBitRate = 250000;
+	constexpr uint32_t kCanStatusIntervalMs = 500;
+	constexpr uint32_t kCanStatusMessageId = 0x070;
+	constexpr uint8_t kCanStatusPayloadLength = 8;
+
 	constexpr uint8_t kConnectDebounce = 2;
 	constexpr uint8_t kDisconnectDebounce = 2;
 

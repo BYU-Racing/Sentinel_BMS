@@ -1,15 +1,22 @@
 #include <Arduino.h>
 #include <pico/mutex.h>
+#include <SPI.h>
+
+#include <cmath>
 
 #include "BMSControl.h"
 #include "CONSTANTS.h"
 #include "JboxIO.h"
 #include "LEDControl.h"
+#include "MCP2517Can.h"
+#include "PINS.h"
 #include "SystemStatus.h"
 
 bool core1_separate_stack = true;
 
 namespace {
+	constexpr MCP2517Can::Oscillator kCanOscillator = MCP2517Can::Oscillator::Osc40MHz;
+
 	// Shared runtime objects are kept here so the Arduino entrypoints remain small and
 	// act mostly as a scheduler. `readBms` owns hardware polling, `ledControl` owns
 	// the strip state, and `gSystemStatuses` is the parsed application snapshot.
@@ -17,14 +24,182 @@ namespace {
 	JboxIO jbox;
 	LEDControl ledControl;
 	ReadBMS readBms;
+	MCP2517Can can0(SPI, CAN0_CS, MCP2517Can::Mode::Can20B, CAN0_INT, kCanOscillator, constants::kCanBitRate);
 	volatile bool balancingOn = false;
 	bool appliedBalancingOn = false;
 	String serialCommandBuffer;
 	uint32_t lastPollMs = 0;
 	uint32_t lastLogMs = 0;
+	uint32_t lastCanStatusMs = 0;
 	uint8_t logCycleCount = 0;
 	mutex_t gBmsDataMutex;
 	volatile bool gBmsDataReady = false;
+	bool gCan0Ready = false;
+
+	uint8_t encodeAggregateStatus(StatusMode mode) {
+		switch (mode) {
+			case StatusMode::GOOD:
+			case StatusMode::READY:
+				return 0b01;
+			case StatusMode::WARNING:
+			case StatusMode::EXHAUSTED:
+				return 0b10;
+			case StatusMode::ERROR:
+				return 0b11;
+			case StatusMode::BAD_DATA:
+			case StatusMode::DISCONNECTED:
+			default:
+				return 0b00;
+		}
+	}
+
+	uint8_t encodeModuleVoltageStatus(const ReadBMS::ModuleReadings& module) {
+		if (!module.connected || !module.cellDataValid) {
+			return 0b11;
+		}
+
+		bool hasLowWarning = false;
+		bool hasHighWarning = false;
+		for (uint16_t cellMv : module.cellVoltages) {
+			if (cellMv == adbms6830::BMSInterface::kInvalidCellValue ||
+			    cellMv < constants::kCellVoltageErrorMinMv ||
+			    cellMv > constants::kCellVoltageErrorMaxMv) {
+				return 0b11;
+			}
+			if (cellMv < constants::kCellVoltageGoodMinMv) {
+				hasLowWarning = true;
+			} else if (cellMv > constants::kCellVoltageGoodMaxMv) {
+				hasHighWarning = true;
+			}
+		}
+
+		if (hasLowWarning) {
+			return 0b00;
+		}
+		if (hasHighWarning) {
+			return 0b10;
+		}
+		return 0b01;
+	}
+
+	uint8_t encodeModuleTempStatus(const ReadBMS::ModuleReadings& module) {
+		if (!module.connected || !module.thermistorDataValid) {
+			return 0b00;
+		}
+
+		float highestTempC = -INFINITY;
+		for (std::size_t thermistorIndex = 0; thermistorIndex < constants::kMonitoredThermistorsPerModule; ++thermistorIndex) {
+			const float tempC = module.thermistorTempsC[thermistorIndex];
+			if (isnan(tempC)) {
+				return 0b00;
+			}
+			if (tempC > highestTempC) {
+				highestTempC = tempC;
+			}
+		}
+
+		if (highestTempC > constants::kTempWarningMaxC) {
+			return 0b11;
+		}
+		if (highestTempC > constants::kTempGoodMaxC) {
+			return 0b10;
+		}
+		return 0b01;
+	}
+
+	uint8_t encodeHighestTempC(const ReadBMS::PollData& pollData) {
+		float highestTempC = 0.0f;
+		bool hasValidTemp = false;
+		for (const ReadBMS::ModuleReadings& module : pollData.modules) {
+			if (!module.connected || !module.thermistorDataValid) {
+				continue;
+			}
+
+			for (std::size_t thermistorIndex = 0; thermistorIndex < constants::kMonitoredThermistorsPerModule; ++thermistorIndex) {
+				const float tempC = module.thermistorTempsC[thermistorIndex];
+				if (!isnan(tempC) && (!hasValidTemp || tempC > highestTempC)) {
+					hasValidTemp = true;
+					highestTempC = tempC;
+				}
+			}
+		}
+
+		if (!hasValidTemp || highestTempC <= 0.0f) {
+			return 0;
+		}
+
+		const long roundedTempC = lroundf(highestTempC);
+		return static_cast<uint8_t>((roundedTempC > 127L) ? 127L : roundedTempC);
+	}
+
+	uint16_t encodePackVoltageDecivolts(const ReadBMS::PollData& pollData) {
+		uint32_t totalCellMv = 0;
+		for (const ReadBMS::ModuleReadings& module : pollData.modules) {
+			if (!module.connected || !module.cellDataValid) {
+				continue;
+			}
+
+			for (uint16_t cellMv : module.cellVoltages) {
+				if (cellMv == adbms6830::BMSInterface::kInvalidCellValue) {
+					continue;
+				}
+				totalCellMv += cellMv;
+			}
+		}
+
+		const uint32_t packDecivolts = (totalCellMv + 50u) / 100u;
+		return static_cast<uint16_t>((packDecivolts > 0x1FFFu) ? 0x1FFFu : packDecivolts);
+	}
+
+	void writeBits(uint8_t* payload, uint8_t startBit, uint8_t bitCount, uint32_t value) {
+		for (uint8_t bitOffset = 0; bitOffset < bitCount; ++bitOffset) {
+			const uint8_t bitIndex = static_cast<uint8_t>(startBit + bitOffset);
+			const uint8_t byteIndex = static_cast<uint8_t>(bitIndex / 8u);
+			const uint8_t bitInByte = static_cast<uint8_t>(bitIndex % 8u);
+			if (((value >> bitOffset) & 0x1u) != 0u) {
+				payload[byteIndex] = static_cast<uint8_t>(payload[byteIndex] | (1u << bitInByte));
+			}
+		}
+	}
+
+	MCP2517Can::Message buildCanStatusMessage(const SystemStatuses& statuses, const ReadBMS::PollData& pollData) {
+		MCP2517Can::Message message;
+		message.id = constants::kCanStatusMessageId;
+		message.length = constants::kCanStatusPayloadLength;
+
+		writeBits(message.data, 0, 2, encodeAggregateStatus(statuses.BMS));
+		writeBits(message.data, 2, 2, encodeAggregateStatus(statuses.board));
+		writeBits(message.data, 4, 2, encodeAggregateStatus(statuses.voltage));
+		writeBits(message.data, 6, 2, encodeAggregateStatus(statuses.temp));
+
+		for (std::size_t moduleIndex = 0; moduleIndex < constants::kModuleCount; ++moduleIndex) {
+			writeBits(message.data,
+			          static_cast<uint8_t>(8u + (moduleIndex * 2u)),
+			          2,
+			          encodeModuleVoltageStatus(pollData.modules[moduleIndex]));
+		}
+		for (std::size_t moduleIndex = 0; moduleIndex < constants::kModuleCount; ++moduleIndex) {
+			writeBits(message.data,
+			          static_cast<uint8_t>(26u + (moduleIndex * 2u)),
+			          2,
+			          encodeModuleTempStatus(pollData.modules[moduleIndex]));
+		}
+
+		writeBits(message.data, 44, 7, encodeHighestTempC(pollData));
+		writeBits(message.data, 51, 13, encodePackVoltageDecivolts(pollData));
+		return message;
+	}
+
+	void configureCan0Spi() {
+		SPI.setRX(CAN_SPI_MISO);
+		SPI.setSCK(CAN_SPI_SCLK);
+		SPI.setTX(CAN_SPI_MOSI);
+		SPI.begin();
+
+		pinMode(CAN0_CS, OUTPUT);
+		pinMode(CAN0_INT, INPUT_PULLUP);
+		digitalWrite(CAN0_CS, HIGH);
+	}
 } // namespace
 
 void setup() {
@@ -86,12 +261,24 @@ void loop() {
 void setup1() {
 	// Serial output is used for periodic module telemetry
 	Serial.begin(115200);
+
+	configureCan0Spi();
+	gCan0Ready = can0.begin();
+
+	Serial.print("CAN0 init ");
+	Serial.print(gCan0Ready ? "ok" : "failed");
+	Serial.print(" error=0x");
+	Serial.println(can0.lastError(), HEX);
 }
 
 void loop1() {
 	const uint32_t now = millis();
 	if (!gBmsDataReady) {
 		return;
+	}
+
+	if (gCan0Ready) {
+		can0.poll();
 	}
 
 	while (Serial.available() > 0) {
@@ -142,6 +329,22 @@ void loop1() {
 		if (logSiliconIds) {
 			ReadBMS::logModuleSiliconIds(bmsSnapshot, Serial);
 			logCycleCount = 0;
+		}
+	}
+
+	if (gCan0Ready && (now - lastCanStatusMs >= constants::kCanStatusIntervalMs)) {
+		lastCanStatusMs = now;
+		SystemStatuses statusesSnapshot{};
+		ReadBMS::PollData pollSnapshot{};
+
+		mutex_enter_blocking(&gBmsDataMutex);
+		statusesSnapshot = gSystemStatuses;
+		pollSnapshot = readBms.data();
+		mutex_exit(&gBmsDataMutex);
+
+		const MCP2517Can::Message statusMessage = buildCanStatusMessage(statusesSnapshot, pollSnapshot);
+		if (!can0.send(statusMessage)) {
+			Serial.println("CAN0 status send failed");
 		}
 	}
 }
