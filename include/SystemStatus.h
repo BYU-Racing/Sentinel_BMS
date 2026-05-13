@@ -88,7 +88,7 @@ inline StatusMode evaluateVoltageStatus(const ModuleReadings& module) {
 		if (cellMv == adbms6830::BMSInterface::kInvalidCellValue) {
 			return StatusMode::BAD_DATA;
 		}
-		#if defined(DANGOURSE_MODE)
+		#if defined(DANGEROUS_MODE)
 		if (cellMv >= constants::kBalanceMaxCellMv) {
 			continue;
 		}

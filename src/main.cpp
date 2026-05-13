@@ -14,6 +14,8 @@
 
 bool core1_separate_stack = true;
 
+#define DANGEROUS_MODE true
+
 namespace {
 	constexpr MCP2517Can::Oscillator kCanOscillator = MCP2517Can::Oscillator::Osc40MHz;
 
