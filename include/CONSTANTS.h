@@ -24,8 +24,14 @@ namespace constants {
 	constexpr uint32_t kModuleScanIntervalMs = 2000;
 
 	constexpr uint32_t kCanBitRate = 250000;
-	constexpr uint32_t kCanStatusIntervalMs = 500;
+	constexpr uint32_t kCanStatusIntervalMs = 500;						// Rate at which data CAN status information is sent
+	constexpr uint32_t kCanChargerIntervalMs = 1000;					// Rate to check if the charger sent a CAN message to toggle on charging mode
+	constexpr uint32_t kCanChargerTimeOutMs = 2000;						// If the charger stops sending CAN messages then toggle off charging mode
+	constexpr uint32_t kCanChargerControlIntervalMs = 1000;				// Rate at which the charger needs a CAN control message
 	constexpr uint32_t kCanStatusMessageId = 0x070;
+	constexpr uint32_t kCanSOCMessageId = 0x072;
+	constexpr uint32_t kCanChargerControlMessageId = 0x1806E5F4; 		// ELCON CAN 3865 charger operating message id
+	constexpr uint32_t kCanElconChargerStatusMessageId = 0x18FF50E5; 	// ELCON CAN 3865 charger status broadcast message
 	constexpr uint8_t kCanStatusPayloadLength = 8;
 
 	constexpr uint8_t kConnectDebounce = 2;
@@ -50,4 +56,12 @@ namespace constants {
 
 	constexpr std::size_t kLedCount = 13;
 	constexpr uint8_t kLedBrightness = 32;
-} // namespace constants
+
+	// TODO constants for charging
+	constexpr float kSocChargingLimit = 1.0f;		  	// SOC percentage charge limit
+	constexpr float kVoltageChargerMaxPackV = 445.0f; 	// Charger will shutoff if limit is over-reached and BMS or wiring fails; this parameter is sent to the charger via CAN in charger mode
+	constexpr uint16_t kStartBalancingMv = 3900; 		// when any cell reaches this value then balancing will start
+	constexpr float kMaxChargerPowerOutputW = 6550.0f;	// ELCON charger specification
+	constexpr float kStartChargeA = 18.0f; 				// 1.0C begining charging amperage
+
+} // namespace constants 

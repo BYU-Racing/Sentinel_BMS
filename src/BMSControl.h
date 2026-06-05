@@ -32,12 +32,21 @@ public:
 		std::array<adbms6830::BMSInterface::SiliconIdReadback, constants::kModuleCount> moduleSiliconIds{};
 	};
 
+	struct StateOfCharge {
+		float minSOC = 0.0f;
+		float maxSOC = 0.0f;
+		uint16_t minCellMv = 0;
+		uint16_t maxCellMv = 0;
+		uint16_t totalPackVoltageMv = 0;
+	};
+
 	ReadBMS();
 
 	void begin();
 	void pollBMS();
 	void updateBalancing(bool enabled);
 	const PollData& data() const;
+	StateOfCharge pollSOC(); // to pull SOC data for charging
 	LogSnapshot captureLogSnapshot() const;
 	static void logBalancingState(const LogSnapshot& snapshot, Stream& stream);
 	static void logConnectedModules(const LogSnapshot& snapshot, Stream& stream);
@@ -114,6 +123,8 @@ private:
 	void copyModuleReadings(ModuleReadings& destination,
 	                        const adbms6830::BMSInterface::ModuleData& source,
 	                        bool connected) const;
+
+	float lookUpSOC(uint16_t cellMv);
 
 	static const SPISettings kBmsSpiSettings;
 
