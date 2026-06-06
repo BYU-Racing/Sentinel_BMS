@@ -168,7 +168,7 @@ namespace {
 
 	MCP2517Can::Message buildCanStatusMessage(const SystemStatuses& statuses, const ReadBMS::PollData& pollData) {
 		MCP2517Can::Message message;
-		message.id = constants::kCanStatusMessageId;
+		message.id = MCP2517Can::CanMsgId::BmsStatus;
 		message.length = constants::kCanStatusPayloadLength;
 
 		writeBits(message.data, 0, 2, encodeAggregateStatus(statuses.BMS));
@@ -197,7 +197,7 @@ namespace {
 	// State of Charge CAN message
 	MCP2517Can::Message buildCanSOCMessage(const SystemStatuses& statuses, ReadBMS::StateOfCharge& soc) {
 		MCP2517Can::Message message;
-		message.id = constants::kCanSOCMessageId;
+		message.id = MCP2517Can::CanMsgId::StateOfCharge;
 		message.length = 6;
 		// if in charging mode send the SOC of the maxCellMv else send the SOC of the minCellMv
 		if (chargingMode) {
@@ -214,7 +214,7 @@ namespace {
 	// BMS CAN msg for Elcon charger communication
 	MCP2517Can::Message buildCanChargerControlMessage(float maxChargingVoltageV, float maxChargingCurrentA, bool chargerControl, bool chargerStatus) {
 		MCP2517Can::Message message;
-		message.id = constants::kCanChargerControlMessageId;
+		message.id = MCP2517Can::CanMsgId::ChargerControl;
 		message.length = 6;
 		message.extended = true;
 
@@ -261,10 +261,6 @@ void setup() {
 	ledControl.update(gSystemStatuses, balancingOn);
 
 	gBmsDataReady = true;
-
-	// set up CAN
-	configureCan0Spi();
-	gCan0Ready = can0.begin();
 }
 
 void loop() {
@@ -302,69 +298,21 @@ void loop() {
 		ledControl.update(statusesForOutput, balancingOn);
 	}
 
-	MCP2517Can::Message rmsg;
-
-	// update charging mode
-	if ((now - lastCanChargerMS >= constants::kCanChargerIntervalMs) && 
-		gCan0Ready && 
-		can0.receive(rmsg) && 
-		rmsg.id == constants::kCanElconChargerStatusMessageId && 
-		!chargingMode)
-	{
-		// check to see if CAN message received is from Elcon charger, and if so update charging mode
-		lastCanChargerMS = now;
-		chargingMode = true;
-	}
-
-	if ((now - lastChargerTimeoutMs >= constants::kCanChargerTimeOutMs) && 
-		!can0.receive(rmsg) && 
-		chargingMode)
-	{
-		// if charger CAN msg was not sent for 5 seconds, turn off charger mode
-		lastChargerTimeoutMs = now;
-		chargingMode = false;
-	}
-
-	if ((now - lastChargerTimeoutMs >= constants::kCanChargerTimeOutMs) &&
-		can0.receive(rmsg) &&
-		chargingMode &&
-		rmsg.id == constants::kCanElconChargerStatusMessageId)
-	{
-		// reset timeout timer
-		lastChargerTimeoutMs = now;
-	}
-
-	// Send CAN charging control msg to Elcon charger if in chargingMode
-	if (chargingMode && (now - lastChargerControlMessageMs >= constants::kCanChargerControlIntervalMs))
-	{
-		lastChargerControlMessageMs = now;
-		ReadBMS::StateOfCharge soc{};
-
-		// get the lastest SOC readings
-		mutex_enter_blocking(&gBmsDataMutex);
-		soc = readBms.pollSOC();
-		mutex_exit(&gBmsDataMutex);
-
-		if (soc.maxCellMv < constants::kCellVoltageGoodMaxMv)
-		{
-			// send CAN charging msg
-			const MCP2517Can::Message chargerControlMessage = buildCanChargerControlMessage(constants::kVoltageChargerMaxPackV, constants::kStartChargeA, 0, 0);
-			if (!can0.send(chargerControlMessage))
-			{
-				Serial.println("CAN0 Charger Control message send failed");
-			}
-		}
-	}
 }
 
 void setup1() {
 	// Serial output is used for periodic module telemetry
 	Serial.begin(115200);
 
+	// set up CAN
+	configureCan0Spi();
+	gCan0Ready = can0.begin();
+
 	Serial.print("CAN0 init ");
 	Serial.print(gCan0Ready ? "ok" : "failed");
 	Serial.print(" error=0x");
 	Serial.println(can0.lastError(), HEX);
+
 }
 
 void loop1() {
@@ -375,6 +323,46 @@ void loop1() {
 
 	if (gCan0Ready) {
 		can0.poll();
+	}
+
+	// check for incoming CAN messages
+	MCP2517Can::Message rmsg;
+	if (can0.receive(rmsg)) {
+		switch (static_cast<MCP2517Can::CanMsgId>(rmsg.id)) {
+			case MCP2517Can::CanMsgId::ChargerStatus:
+				// reset charger status CAN msg timeout
+				lastChargerTimeoutMs = now;
+				// update charger mode
+				if (!chargingMode) {chargingMode = true;}
+				break;
+			default:
+				break;
+		}
+	}
+
+	// if charger status CAN msg was not recieved for 2 seconds, turn off charging mode
+	if ((now - lastChargerTimeoutMs >= constants::kCanChargerTimeOutMs) && chargingMode) {
+		lastChargerTimeoutMs = now;
+		chargingMode = false;
+	}
+
+	// Send CAN charging control msg to Elcon charger if in chargingMode
+	if (chargingMode && (now - lastChargerControlMessageMs >= constants::kCanChargerControlIntervalMs)) {
+		lastChargerControlMessageMs = now;
+		ReadBMS::StateOfCharge soc{};
+
+		// get the lastest SOC readings
+		mutex_enter_blocking(&gBmsDataMutex);
+		soc = readBms.pollSOC();
+		mutex_exit(&gBmsDataMutex);
+
+		if (soc.maxCellMv < constants::kCellVoltageGoodMaxMv) {
+			// send CAN charging msg
+			const MCP2517Can::Message chargerControlMessage = buildCanChargerControlMessage(constants::kVoltageChargerMaxPackV, constants::kStartChargeA, 0, 0);
+			if (!can0.send(chargerControlMessage)) {
+				Serial.println("CAN0 Charger Control message send failed");
+			}
+		} 
 	}
 
 	while (Serial.available() > 0) {
@@ -461,14 +449,6 @@ void loop1() {
 			Serial.println("CAN0 SOC message send failed");
 		}
 
-		// for debuging charger CAN status
-		MCP2517Can::Message rmsg;
-		if (can0.receive(rmsg))
-		{
-			if (rmsg.id == constants::kCanElconChargerStatusMessageId) 
-			{
-				Serial.println("Charger CAN status message received");
-			}
-		}
 	}
+
 }

@@ -24,6 +24,15 @@ public:
     Osc40MHzDiv2,
   };
 
+  enum CanMsgId : uint32_t
+  {
+    BmsStatus = 0x070,           // BMS status message
+    StateOfCharge = 0x072,       // BMS state of charge 
+
+    ChargerControl = 0x1806E5F4, // ELCON CAN 3865 charger control message id
+    ChargerStatus = 0x18FF50E5,  // ELCON CAN 3865 charger status broadcast message
+  };
+
   struct Message {
     uint32_t id = 0;
     bool extended = false;

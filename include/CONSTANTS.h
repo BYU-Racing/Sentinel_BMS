@@ -28,10 +28,6 @@ namespace constants {
 	constexpr uint32_t kCanChargerIntervalMs = 1000;					// Rate to check if the charger sent a CAN message to toggle on charging mode
 	constexpr uint32_t kCanChargerTimeOutMs = 2000;						// If the charger stops sending CAN messages then toggle off charging mode
 	constexpr uint32_t kCanChargerControlIntervalMs = 1000;				// Rate at which the charger needs a CAN control message
-	constexpr uint32_t kCanStatusMessageId = 0x070;
-	constexpr uint32_t kCanSOCMessageId = 0x072;
-	constexpr uint32_t kCanChargerControlMessageId = 0x1806E5F4; 		// ELCON CAN 3865 charger operating message id
-	constexpr uint32_t kCanElconChargerStatusMessageId = 0x18FF50E5; 	// ELCON CAN 3865 charger status broadcast message
 	constexpr uint8_t kCanStatusPayloadLength = 8;
 
 	constexpr uint8_t kConnectDebounce = 2;
