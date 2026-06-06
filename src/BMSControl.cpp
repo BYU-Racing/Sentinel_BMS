@@ -761,7 +761,5 @@ ReadBMS::StateOfCharge ReadBMS::pollSOC() {
 	soc.maxSOC = maxStateOfCharge;
 	soc.minCellMv = lowestCellMv;
 	soc.maxCellMv = highestCellMv;
-	// convert Mv to V
-	soc.totalPackVoltageMv = static_cast<uint16_t>(totalCellMv * 0.001);
 	return soc;
 }

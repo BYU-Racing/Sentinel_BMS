@@ -212,12 +212,12 @@ namespace {
 		message.length = 6;
 		// if in charging mode send the SOC of the maxCellMv else send the SOC of the minCellMv
 		if (chargingState == ChargingState::CHARGING) {
-			writeBits(message.data, 0, 32, soc.maxSOC);
+			message.data[0] = soc.maxSOC;
 		} else {
-			writeBits(message.data, 0, 32, soc.minSOC);
+			message.data[0] = soc.minSOC;
 		}
 
-		writeBits(message.data, 32, 48, soc.minCellMv);
+		message.data[4] = soc.minCellMv;
 
 		return message;
 	}	
@@ -352,8 +352,13 @@ void loop1() {
 			case MCP2517Can::CanMsgId::ChargerStatus:
 				// reset charger status CAN msg timeout
 				lastChargerTimeoutMs = now;
-				// update charger mode
-				if (chargingState == ChargingState::DISABLED) {
+				if(rmsg.data[4] != 0) {
+					// According to the elcon spec, if any of the flags are set it
+					// means something has gone amiss. We don't care about the
+					// specifics, so we just call it a fault.
+					chargingState = ChargingState::FAULT;
+				} else if (chargingState == ChargingState::DISABLED) {
+					// update charger mode
 					chargingState = ChargingState::READY;
 				}
 				break;
@@ -411,8 +416,9 @@ void loop1() {
 
 		float targetAmperage = 0.0f;
 		bool chargerControl = MCP2517Can::ChargerControl::ChargerClose;
-		bool chargerMode = MCP2517Can::ChargingMode::ChargingMode;	// should always be in charging mode
-
+		// should always be in charging mode
+		bool chargerMode = MCP2517Can::ChargingMode::ChargingMode;	
+		
 		switch (static_cast<ChargingState>(chargingState)) {
 			case ChargingState::CHARGING:
 				targetAmperage = constants::kStartChargeA;
@@ -432,7 +438,9 @@ void loop1() {
 			chargerControl,
 			chargerMode);
 
-		can0.send(msg);
+		if (can0.send(msg)) {
+			Serial.println("Charger control message sent success");
+		}
 	}
 
 	while (Serial.available() > 0) {

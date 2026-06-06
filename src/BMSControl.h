@@ -32,12 +32,12 @@ public:
 		std::array<adbms6830::BMSInterface::SiliconIdReadback, constants::kModuleCount> moduleSiliconIds{};
 	};
 
+	// To be used for charging logic and CAN msg sent to the dashboard
 	struct StateOfCharge {
 		float minSOC = 0.0f;
 		float maxSOC = 0.0f;
 		uint16_t minCellMv = 0;
 		uint16_t maxCellMv = 0;
-		uint16_t totalPackVoltageMv = 0;
 	};
 
 	ReadBMS();
