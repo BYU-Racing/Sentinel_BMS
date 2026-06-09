@@ -693,39 +693,12 @@ void ReadBMS::copyModuleReadings(ModuleReadings& destination,
 	destination.thermistorTempsC = source.thermistorTempsC;
 }
 
-// CHARGING
-float ReadBMS::lookUpSOC(uint16_t cellMv) {
-	// check if value is out of range
-	if (cellMv <= soclookuptable::kVoltageTable[0]) {
-		return soclookuptable::kSocTable[0];
-	}
-
-	if (cellMv >= soclookuptable::kVoltageTable[soclookuptable::kNumLookUpPoints - 1]) {
-		return soclookuptable::kSocTable[soclookuptable::kNumLookUpPoints - 1];
-	}
-
-	for (size_t i=0; i < soclookuptable::kNumLookUpPoints - 1; i++) {
-		if (cellMv >= soclookuptable::kVoltageTable[i] && cellMv <= soclookuptable::kVoltageTable[i+1]) {
-			// linear interpolation
-			float v1 = soclookuptable::kVoltageTable[i];
-			float v2 = soclookuptable::kVoltageTable[i + 1];
-			float soc1 = soclookuptable::kSocTable[i];
-			float soc2 = soclookuptable::kSocTable[i + 1];
-
-			return static_cast<float>((soc1 * (v1 - cellMv) + soc2 * (cellMv - v2)) / (v1 - v2));
-		}
-	}
-
-	// fallback
-	return 0.0;
-}
-
+// Update State of charge struct data 
 ReadBMS::StateOfCharge ReadBMS::pollSOC() {
 	uint16_t lowestCellMv = UINT16_MAX;
 	uint16_t highestCellMv = 0;
 	float minStateOfCharge = 0.0f;
 	float maxStateOfCharge = 0.0f;
-	uint32_t totalCellMv = 0;
 
 	// get lastest module readings
 	updatePollData();
@@ -748,8 +721,6 @@ ReadBMS::StateOfCharge ReadBMS::pollSOC() {
 			if (cellMv > highestCellMv) {
 				highestCellMv = cellMv;
 			}
-
-			totalCellMv += cellMv;
 		}
 	}
 

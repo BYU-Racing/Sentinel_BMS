@@ -14,6 +14,8 @@
 
 bool core1_separate_stack = true;
 
+// #define COMMUNICATE_WITH_CHARGER
+
 namespace {
 	constexpr MCP2517Can::Oscillator kCanOscillator = MCP2517Can::Oscillator::Osc40MHz;
 
@@ -402,7 +404,7 @@ void loop1() {
 				}
 				break;
 			case ChargingState::FAULT:
-				// Set BMS_STATUS_OUTPUT, pull high if fault
+				// Set BMS_STATUS_OUTPUT, pull if fault
 				jbox.setStatus(statusesSnapshot.BMS);
 				break;
 			default:
@@ -411,7 +413,11 @@ void loop1() {
 	}
 
 	// send charging CAN msg
-	if (gCan0Ready && (now - lastChargerControlMessageMs >= constants::kCanChargerControlIntervalMs)) {
+	// Only send this msg if charging state is CHARGING or COMPLETE
+	#ifdef COMMUNICATE_WITH_CHARGER
+	if (gCan0Ready &&
+		(now - lastChargerControlMessageMs >= constants::kCanChargerControlIntervalMs) &&
+		(chargingState == ChargingState::CHARGING || chargingState == ChargingState::COMPLETE)) {
 		lastChargerControlMessageMs = now;
 
 		float targetAmperage = 0.0f;
@@ -442,6 +448,7 @@ void loop1() {
 			Serial.println("Charger control message sent success");
 		}
 	}
+	#endif
 
 	while (Serial.available() > 0) {
 		const char ch = static_cast<char>(Serial.read());
@@ -518,5 +525,4 @@ void loop1() {
 		}
 
 	}
-
 }

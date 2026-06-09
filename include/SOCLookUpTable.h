@@ -3,6 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 
+// SOC : State of charge
+// Human readable state of the accumulator because the charging logic 
+// uses only the min cell voltage or the max cell voltage in the pack
+
 namespace soclookuptable {
     constexpr uint8_t kNumLookUpPoints = 100;
 
@@ -36,3 +40,29 @@ namespace soclookuptable {
     };
 
 } // State of charge lookup table
+
+// Maps the first table (voltages) to the second table (percentage)
+float ReadBMS::lookUpSOC(uint16_t cellMv) {
+	// check if value is out of range
+	if (cellMv <= soclookuptable::kVoltageTable[0]) {
+		return soclookuptable::kSocTable[0];
+	}
+	if (cellMv >= soclookuptable::kVoltageTable[soclookuptable::kNumLookUpPoints - 1]) {
+		return soclookuptable::kSocTable[soclookuptable::kNumLookUpPoints - 1];
+	}
+
+    // linear interpolation to map between the two tables
+    for (size_t i=0; i < soclookuptable::kNumLookUpPoints - 1; i++) {
+		if (cellMv >= soclookuptable::kVoltageTable[i] && cellMv <= soclookuptable::kVoltageTable[i+1]) {
+			float v1 = soclookuptable::kVoltageTable[i];
+			float v2 = soclookuptable::kVoltageTable[i + 1];
+			float soc1 = soclookuptable::kSocTable[i];
+			float soc2 = soclookuptable::kSocTable[i + 1];
+
+			return static_cast<float>((soc1 * (v1 - cellMv) + soc2 * (cellMv - v2)) / (v1 - v2));
+		}
+	}
+
+	// fallback
+	return 0.0;
+}
