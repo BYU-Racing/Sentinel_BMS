@@ -16,6 +16,8 @@ bool core1_separate_stack = true;
 
 // #define COMMUNICATE_WITH_CHARGER
 
+// #define BALANCE_MODULES_INDEPENDENTLY
+
 namespace {
 	constexpr MCP2517Can::Oscillator kCanOscillator = MCP2517Can::Oscillator::Osc40MHz;
 

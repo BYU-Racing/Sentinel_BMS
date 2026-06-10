@@ -91,7 +91,7 @@ private:
 	static AggregateStats cellStatsForModule(const ModuleReadings& module);
 	static AggregateStats thermistorStatsForModule(const ModuleReadings& module);
 	static bool boardThermistorFaulted(const ModuleReadings& module);
-	static uint16_t balanceMaskForModule(const ModuleReadings& module, uint16_t currentMask);
+	static uint16_t balanceMaskForModule(const ModuleReadings &module, uint16_t currentMask, uint16_t lowestPackCellMv);
 	static void printSiliconId(Stream& stream, const adbms6830::BMSInterface::SiliconIdReadback& siliconId);
 	void applyBalanceMask(adbms6830::BMSInterface& bmsInterface,
 	                      std::array<uint16_t, kModuleCount>& appliedMasks,
