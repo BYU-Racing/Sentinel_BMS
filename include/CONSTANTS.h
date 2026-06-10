@@ -46,9 +46,10 @@ namespace constants {
 	constexpr uint16_t kBalanceMaxCellMv = 5500;
 
 	constexpr float kTempWarningMinC = 5.0f;
-	constexpr float kTempGoodMaxC = 50.0f;
-	constexpr float kTempWarningMaxC = 60.0f;
-	constexpr float kTempExhaustedMaxC = 70.0f;
+	constexpr float kTempGoodMaxC = 55.0f;
+	constexpr uint8_t kTempChargingFaultC = 65;				
+	constexpr float kTempWarningMaxC = 75.0f;			// if cells reach 75 C then the BMS should error
+	constexpr float kTempExhaustedMaxC = 80.0f;			// the cells should not go any higher than this per the datasheet
 	constexpr float kBoardThermistorFaultMinC = 70.0f;
 
 	constexpr std::size_t kLedCount = 13;
@@ -59,6 +60,6 @@ namespace constants {
 	constexpr float kVoltageChargerMaxPackV = 445.0f; 	// Charger will shutoff if limit is over-reached and BMS or wiring fails; this parameter is sent to the charger via CAN in charger mode
 	constexpr uint16_t kStartBalancingMv = 3900; 		// when any cell reaches this value then balancing will start
 	constexpr float kMaxChargerPowerOutputW = 6550.0f;	// ELCON charger specification
-	constexpr float kStartChargeA = 18.0f; 				// 1.0C begining charging amperage
+	constexpr float kStartChargeA = 9.0f; 				// 1.0C begining charging amperage
 
 } // namespace constants 

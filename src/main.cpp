@@ -14,7 +14,7 @@
 
 bool core1_separate_stack = true;
 
-// #define COMMUNICATE_WITH_CHARGER
+#define COMMUNICATE_WITH_CHARGER
 
 // #define BALANCE_MODULES_INDEPENDENTLY
 
@@ -233,7 +233,9 @@ namespace {
 		message.length = 8;
 		message.extended = true;
 
+		// convert voltage to decivolts
 		uint16_t rawMaxChargingVoltageV = static_cast<uint16_t>(maxChargingVoltageV * 10.0f);
+		// convert amperage to deciamps
 		uint16_t rawMaxChargingCurrentA = static_cast<uint16_t>(maxChargingCurrentA * 10.0f);
 
 		// Max allowable charging terminal
@@ -385,11 +387,13 @@ void loop1() {
 		lastChargerStatusUpdateMs = now;
 		ReadBMS::StateOfCharge soc{};
 		SystemStatuses statusesSnapshot{};
+		ReadBMS::PollData pollSnapshot{};
 
 		// get the lastest SOC readings
 		mutex_enter_blocking(&gBmsDataMutex);
 		statusesSnapshot = gSystemStatuses;
 		soc = readBms.pollSOC();
+		pollSnapshot = readBms.data();
 		mutex_exit(&gBmsDataMutex);
 
 		switch (static_cast<ChargingState>(chargingState)) {
@@ -404,10 +408,10 @@ void loop1() {
 				if (soc.maxCellMv >= constants::kCellVoltageGoodMaxMv) {
 					chargingState = ChargingState::COMPLETE;
 				}
-				break;
-			case ChargingState::FAULT:
-				// Set BMS_STATUS_OUTPUT, pull if fault
-				jbox.setStatus(statusesSnapshot.BMS);
+				// check temperature
+				if (encodeHighestTempC(pollSnapshot) >= constants::kTempChargingFaultC) {
+					chargingState = ChargingState::FAULT;
+				}
 				break;
 			default:
 				break;
