@@ -498,7 +498,13 @@ void loop1() {
 		Serial.println(statusModeName(statusesSnapshot.voltage));
 		Serial.print("status temp: ");
 		Serial.println(statusModeName(statusesSnapshot.temp));
-
+		Serial.print("Charging State: ");
+		if (chargingState == ChargingState::CHARGING) {
+			Serial.println("CHARGING");
+		} else {
+			Serial.println("CHARGING DISABLED");
+		}
+		
 		ReadBMS::logBalancingState(bmsSnapshot, Serial);
 
 		ReadBMS::logConnectedModules(bmsSnapshot, Serial);
@@ -521,13 +527,13 @@ void loop1() {
 		mutex_exit(&gBmsDataMutex);
 
 		const MCP2517Can::Message statusMessage = buildCanStatusMessage(statusesSnapshot, pollSnapshot);
-		if (!can0.send(statusMessage)) {
-			Serial.println("CAN0 status message send failed");
+		if (can0.send(statusMessage)) {
+			Serial.println("CAN0 status message sent");
 		}
 
 		const MCP2517Can::Message socMessage = buildCanSOCMessage(statusesSnapshot, soc);
-		if (!can0.send(socMessage)) {
-			Serial.println("CAN0 SOC message send failed");
+		if (can0.send(socMessage)) {
+			Serial.println("CAN0 SOC message sent");
 		}
 
 	}

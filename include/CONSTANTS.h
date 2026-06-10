@@ -24,7 +24,7 @@ namespace constants {
 	constexpr uint32_t kModuleScanIntervalMs = 2000;
 
 	constexpr uint32_t kCanBitRate = 250000;
-	constexpr uint32_t kCanStatusIntervalMs = 500;						// Rate at which data CAN status information is sent
+	constexpr uint32_t kCanStatusIntervalMs = 1000;						// Rate at which data CAN status information is sent
 	constexpr uint32_t kCanChargerIntervalMs = 1000;					// Rate to check if the charger sent a CAN message to toggle on charging mode
 	constexpr uint32_t kCanChargerTimeOutMs = 2000;						// If the charger stops sending CAN messages then toggle off charging mode
 	constexpr uint32_t kCanChargerControlIntervalMs = 1000;				// Rate at which the charger needs a CAN control message
