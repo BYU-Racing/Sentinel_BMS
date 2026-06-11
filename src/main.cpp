@@ -501,8 +501,14 @@ void loop1() {
 		Serial.print("Charging State: ");
 		if (chargingState == ChargingState::CHARGING) {
 			Serial.println("CHARGING");
-		} else {
+		} else if (chargingState == ChargingState::DISABLED) {
 			Serial.println("CHARGING DISABLED");
+		} else if (chargingState == ChargingState::READY) {
+			Serial.println("CHARGING READY");
+		} else if (chargingState == ChargingState::COMPLETE) {
+			Serial.println("CHARGING COMPLETE");
+		} else {
+			Serial.println("CHARGING FAULT");
 		}
 		
 		ReadBMS::logBalancingState(bmsSnapshot, Serial);
@@ -536,5 +542,14 @@ void loop1() {
 			Serial.println("CAN0 SOC message sent");
 		}
 
+		// CAN msg debugging
+		Serial.print("SOC: ");
+		Serial.println(soc.minSOC, 3);
+		Serial.print("Min cell voltage: ");
+		Serial.println(soc.minCellMv);
+		Serial.print("Max cell voltage: ");
+		Serial.println(soc.maxCellMv);
+		Serial.print("Highest Temp: ");
+		Serial.println(encodeHighestTempC(pollSnapshot));
 	}
 }
