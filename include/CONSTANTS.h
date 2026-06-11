@@ -46,10 +46,10 @@ namespace constants {
 	constexpr uint16_t kBalanceMaxCellMv = 5500;
 
 	constexpr float kTempWarningMinC = 5.0f;
-	constexpr float kTempGoodMaxC = 55.0f;
-	constexpr uint8_t kTempChargingFaultC = 65;				
-	constexpr float kTempWarningMaxC = 75.0f;			// if cells reach 75 C then the BMS should error
-	constexpr float kTempExhaustedMaxC = 80.0f;			// the cells should not go any higher than this per the datasheet
+	constexpr float kTempGoodMaxC = 50.0f;
+	constexpr uint8_t kTempChargingFaultC = 60;			// stop charging if max cell temp reaches this value
+	constexpr float kTempWarningMaxC = 60.0f;			// if cells reach 60 C then the BMS should error
+	constexpr float kTempExhaustedMaxC = 70.0f;			// the cells should not go any higher than this per the datasheet
 	constexpr float kBoardThermistorFaultMinC = 70.0f;
 
 	constexpr std::size_t kLedCount = 13;
