@@ -423,7 +423,7 @@ void loop1() {
 	#ifdef COMMUNICATE_WITH_CHARGER
 	if (gCan0Ready &&
 		(now - lastChargerControlMessageMs >= constants::kCanChargerControlIntervalMs) &&
-		(chargingState == ChargingState::CHARGING || chargingState == ChargingState::COMPLETE)) {
+		(chargingState == ChargingState::CHARGING || chargingState == ChargingState::COMPLETE || chargingState == ChargingState::FAULT)) {
 		lastChargerControlMessageMs = now;
 
 		float targetAmperage = 0.0f;
@@ -437,6 +437,11 @@ void loop1() {
 				chargerControl = MCP2517Can::ChargerControl::ChargerStart;
 				break;
 			case ChargingState::COMPLETE:
+				targetAmperage = 0.0f;
+				chargerControl = MCP2517Can::ChargerControl::ChargerClose;
+				break;
+			case ChargingState::FAULT:
+				// send msg to charger to STOP charging
 				targetAmperage = 0.0f;
 				chargerControl = MCP2517Can::ChargerControl::ChargerClose;
 				break;
