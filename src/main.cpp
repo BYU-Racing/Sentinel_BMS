@@ -39,6 +39,11 @@ namespace {
 	uint32_t lastChargerTimeoutMs = 0;
 	uint32_t lastChargerControlMessageMs = 0;
 	uint32_t lastChargerStatusUpdateMs = 0;
+
+	// DEBUG
+	uint32_t GPIO_28_lastMS = 0;
+	bool GPIO_28_PIN_STATE = false;
+
 	uint8_t logCycleCount = 0;
 	mutex_t gBmsDataMutex;
 	volatile bool gBmsDataReady = false;
@@ -287,6 +292,9 @@ void setup() {
 	ledControl.update(gSystemStatuses, balancingOn);
 
 	gBmsDataReady = true;
+
+	// DEBUG
+	pinMode(GPIO_28, OUTPUT);
 }
 
 void loop() {
@@ -318,10 +326,34 @@ void loop() {
 		mutex_exit(&gBmsDataMutex);
 
 		// Set BMS_STATUS_OUTPUT, pull low if everything is good
-		jbox.setStatus(statusesForOutput.BMS);
+		// jbox.setStatus(statusesForOutput.BMS);
+
+		// TODO Test Shutdown pin
+		// This should simulate a fault
+		digitalWrite(BMS_STATUS_OUTPUT, LOW);
 
 		// Render the current statuses to the LED strip
 		ledControl.update(statusesForOutput, balancingOn);
+	}
+
+	// TODO DEBUG
+	if (now - GPIO_28_lastMS >= 5000)
+	{
+		// reset timer 
+		GPIO_28_lastMS = now;
+
+		if (!GPIO_28_PIN_STATE)
+		{
+			digitalWrite(GPIO_28, HIGH);
+			GPIO_28_PIN_STATE = true;
+			Serial.println("PIN 28 is pulled HIGH");
+		}
+		else
+		{
+			digitalWrite(GPIO_28, LOW);
+			GPIO_28_PIN_STATE = false;
+			Serial.println("PIN 28 is pulled LOW");
+		}
 	}
 
 }
@@ -483,78 +515,78 @@ void loop1() {
 	// Logging is intentionally decoupled from polling so serial I/O cannot throttle the
 	// battery sampling rate or the visual status update cadence.
 	// TODO, make logging more interactive
-	if (now - lastLogMs >= constants::kLogIntervalMs) {
-		lastLogMs = now;
-		++logCycleCount;
-		SystemStatuses statusesSnapshot{};
-		ReadBMS::LogSnapshot bmsSnapshot{};
-		const bool logSiliconIds = logCycleCount >= 4u;
+	// if (now - lastLogMs >= constants::kLogIntervalMs) {
+	// 	lastLogMs = now;
+	// 	++logCycleCount;
+	// 	SystemStatuses statusesSnapshot{};
+	// 	ReadBMS::LogSnapshot bmsSnapshot{};
+	// 	const bool logSiliconIds = logCycleCount >= 4u;
 
-		mutex_enter_blocking(&gBmsDataMutex);
-		statusesSnapshot = gSystemStatuses;
-		bmsSnapshot = readBms.captureLogSnapshot();
-		mutex_exit(&gBmsDataMutex);
+	// 	mutex_enter_blocking(&gBmsDataMutex);
+	// 	statusesSnapshot = gSystemStatuses;
+	// 	bmsSnapshot = readBms.captureLogSnapshot();
+	// 	mutex_exit(&gBmsDataMutex);
 
-		Serial.print("status BMS: ");
-		Serial.println(statusModeName(statusesSnapshot.BMS));
-		Serial.print("status board: ");
-		Serial.println(statusModeName(statusesSnapshot.board));
-		Serial.print("status voltage: ");
-		Serial.println(statusModeName(statusesSnapshot.voltage));
-		Serial.print("status temp: ");
-		Serial.println(statusModeName(statusesSnapshot.temp));
-		Serial.print("Charging State: ");
-		if (chargingState == ChargingState::CHARGING) {
-			Serial.println("CHARGING");
-		} else if (chargingState == ChargingState::DISABLED) {
-			Serial.println("CHARGING DISABLED");
-		} else if (chargingState == ChargingState::READY) {
-			Serial.println("CHARGING READY");
-		} else if (chargingState == ChargingState::COMPLETE) {
-			Serial.println("CHARGING COMPLETE");
-		} else {
-			Serial.println("CHARGING FAULT");
-		}
+	// 	Serial.print("status BMS: ");
+	// 	Serial.println(statusModeName(statusesSnapshot.BMS));
+	// 	Serial.print("status board: ");
+	// 	Serial.println(statusModeName(statusesSnapshot.board));
+	// 	Serial.print("status voltage: ");
+	// 	Serial.println(statusModeName(statusesSnapshot.voltage));
+	// 	Serial.print("status temp: ");
+	// 	Serial.println(statusModeName(statusesSnapshot.temp));
 		
-		ReadBMS::logBalancingState(bmsSnapshot, Serial);
+	// 	ReadBMS::logBalancingState(bmsSnapshot, Serial);
 
-		ReadBMS::logConnectedModules(bmsSnapshot, Serial);
-		if (logSiliconIds) {
-			ReadBMS::logModuleSiliconIds(bmsSnapshot, Serial);
-			logCycleCount = 0;
-		}
-	}
+	// 	ReadBMS::logConnectedModules(bmsSnapshot, Serial);
+	// 	if (logSiliconIds) {
+	// 		ReadBMS::logModuleSiliconIds(bmsSnapshot, Serial);
+	// 		logCycleCount = 0;
+	// 	}
+	// }
 
-	if (gCan0Ready && (now - lastCanStatusMs >= constants::kCanStatusIntervalMs)) {
-		lastCanStatusMs = now;
-		SystemStatuses statusesSnapshot{};
-		ReadBMS::PollData pollSnapshot{};
-		ReadBMS::StateOfCharge soc{};
+	// if (gCan0Ready && (now - lastCanStatusMs >= constants::kCanStatusIntervalMs)) {
+	// 	lastCanStatusMs = now;
+	// 	SystemStatuses statusesSnapshot{};
+	// 	ReadBMS::PollData pollSnapshot{};
+	// 	ReadBMS::StateOfCharge soc{};
 
-		mutex_enter_blocking(&gBmsDataMutex);
-		statusesSnapshot = gSystemStatuses;
-		pollSnapshot = readBms.data();
-		soc = readBms.pollSOC();
-		mutex_exit(&gBmsDataMutex);
+	// 	mutex_enter_blocking(&gBmsDataMutex);
+	// 	statusesSnapshot = gSystemStatuses;
+	// 	pollSnapshot = readBms.data();
+	// 	soc = readBms.pollSOC();
+	// 	mutex_exit(&gBmsDataMutex);
 
-		const MCP2517Can::Message statusMessage = buildCanStatusMessage(statusesSnapshot, pollSnapshot);
-		if (can0.send(statusMessage)) {
-			Serial.println("CAN0 status message sent");
-		}
+	// 	const MCP2517Can::Message statusMessage = buildCanStatusMessage(statusesSnapshot, pollSnapshot);
+	// 	if (can0.send(statusMessage)) {
+	// 		Serial.println("CAN0 status message sent");
+	// 	}
 
-		const MCP2517Can::Message socMessage = buildCanSOCMessage(statusesSnapshot, soc);
-		if (can0.send(socMessage)) {
-			Serial.println("CAN0 SOC message sent");
-		}
+	// 	const MCP2517Can::Message socMessage = buildCanSOCMessage(statusesSnapshot, soc);
+	// 	if (can0.send(socMessage)) {
+	// 		Serial.println("CAN0 SOC message sent");
+	// 	}
 
-		// CAN msg debugging
-		Serial.print("SOC: ");
-		Serial.println(soc.minSOC, 3);
-		Serial.print("Min cell voltage: ");
-		Serial.println(soc.minCellMv);
-		Serial.print("Max cell voltage: ");
-		Serial.println(soc.maxCellMv);
-		Serial.print("Highest Temp: ");
-		Serial.println(encodeHighestTempC(pollSnapshot));
-	}
+	// 	// CAN msg debugging
+	// 	// Serial.print("SOC: ");
+	// 	// Serial.println(soc.minSOC, 3);
+	// 	// Serial.print("Min cell voltage: ");
+	// 	// Serial.println(soc.minCellMv);
+	// 	// Serial.print("Max cell voltage: ");
+	// 	// Serial.println(soc.maxCellMv);
+	// 	// Serial.print("Highest Temp: ");
+	// 	// Serial.println(encodeHighestTempC(pollSnapshot));
+	// 	// 	Serial.print("Charging State: ");
+	// 	// 	if (chargingState == ChargingState::CHARGING) {
+	// 	// 		Serial.println("CHARGING");
+	// 	// 	} else if (chargingState == ChargingState::DISABLED) {
+	// 	// 		Serial.println("CHARGING DISABLED");
+	// 	// 	} else if (chargingState == ChargingState::READY) {
+	// 	// 		Serial.println("CHARGING READY");
+	// 	// 	} else if (chargingState == ChargingState::COMPLETE) {
+	// 	// 		Serial.println("CHARGING COMPLETE");
+	// 	// 	} else {
+	// 	// 		Serial.println("CHARGING FAULT");
+	// 	// 	}
+	// }
 }
