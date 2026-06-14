@@ -18,9 +18,7 @@
 #define ADBMS_SPI_SCLK 10
 #define ADBMS_SPI_MOSI 11
 #define ADBMS_SPI_MISO 12
-#define CHARGE_ENABLE_SENSE 13
 #define DRIVE_ENABLE_SENSE 14
-#define BMS_STATUS_OUTPUT 15
 #define UART0_TX 16
 #define UART0_RX 17
 #define CAN0_INT 18
@@ -33,7 +31,11 @@
 #define GPIO_25 25
 #define GPIO_26 26
 #define GPIO_27 27
-#define GPIO_28 28
-#define GPIO_29 29
+
+// pin out for shutdown circut
+#define BMS_STATUS_OUTPUT 28
+
+// pin to enable or disable charging
+#define CHARGE_ENABLE_SENSE 29
 
 #endif //PINS_H

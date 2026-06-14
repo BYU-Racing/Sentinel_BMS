@@ -19,16 +19,19 @@ namespace constants {
 	static_assert(kBoardThermistorIndex == kMonitoredThermistorsPerModule,
 	              "Board thermistor should be the first thermistor excluded from aggregate status");
 
-	constexpr uint32_t kPollIntervalMs = 500;
+	// interval at which the BMS pulls data from the latest slave board readings
+	constexpr uint32_t kPollIntervalMs = 100;
+	// interval BMS sends data via Serial
 	constexpr uint32_t kLogIntervalMs = 2000;
-	constexpr uint32_t kModuleScanIntervalMs = 2000;
+	// interval BMS scans modules
+	constexpr uint32_t kModuleScanIntervalMs = 1000;
 
 	constexpr uint32_t kCanBitRate = 250000;
-	constexpr uint32_t kCanStatusIntervalMs = 1000;						// Rate at which data CAN status information is sent
-	constexpr uint32_t kCanChargerIntervalMs = 1000;					// Rate to check if the charger sent a CAN message to toggle on charging mode
-	constexpr uint32_t kCanChargerTimeOutMs = 2000;						// If the charger stops sending CAN messages then toggle off charging mode
-	constexpr uint32_t kCanChargerControlIntervalMs = 1000;				// Rate at which the charger needs a CAN control message
-	constexpr uint32_t kChargerStatusUpdateIntervalMs = 250;
+	constexpr uint32_t kCanStatusIntervalMs = 1000;				// Rate at which data CAN status information is sent
+	constexpr uint32_t kCanChargerIntervalMs = 1000;			// Rate to check if the charger sent a CAN message to toggle on charging mode
+	constexpr uint32_t kCanChargerTimeOutMs = 2000;				// If the charger stops sending CAN messages then toggle off charging mode
+	constexpr uint32_t kCanChargerControlIntervalMs = 1000;		// Rate at which the charger needs a CAN control message
+	constexpr uint32_t kChargerStatusUpdateIntervalMs = 200;	// Rate at which charge states are updated based on BMS polled data
 	constexpr uint8_t kCanStatusPayloadLength = 8;
 
 	constexpr uint8_t kConnectDebounce = 2;
@@ -47,7 +50,7 @@ namespace constants {
 
 	constexpr float kTempWarningMinC = 5.0f;
 	constexpr float kTempGoodMaxC = 50.0f;
-	constexpr uint8_t kTempChargingFaultC = 60;			// stop charging if max cell temp reaches this value
+	constexpr uint8_t kTempChargingFaultC = 55;			// stop charging if max cell temp reaches this value
 	constexpr float kTempWarningMaxC = 60.0f;			// if cells reach 60 C then the BMS should error
 	constexpr float kTempExhaustedMaxC = 70.0f;			// the cells should not go any higher than this per the datasheet
 	constexpr float kBoardThermistorFaultMinC = 70.0f;
@@ -55,11 +58,10 @@ namespace constants {
 	constexpr std::size_t kLedCount = 13;
 	constexpr uint8_t kLedBrightness = 32;
 
-	// TODO constants for charging
-	constexpr float kSocChargingLimit = 1.0f;		  	// SOC percentage charge limit
-	constexpr float kVoltageChargerMaxPackV = 445.0f; 	// Charger will shutoff if limit is over-reached and BMS or wiring fails; this parameter is sent to the charger via CAN in charger mode
-	constexpr uint16_t kStartBalancingMv = 3900; 		// when any cell reaches this value then balancing will start
+	// constants for charging
+	constexpr uint16_t kChargerPinConsideredHigh = 620; // Charger analog read pin will read 1 V when high, thus 4096/3.3 V = 1241, and we add space for uncertainty and noise
+	constexpr uint16_t kVoltageChargerMaxPackV = 445; 	// Charger will shutoff if limit is over-reached and BMS or wiring fails; this parameter is sent to the charger via CAN in charger mode
 	constexpr float kMaxChargerPowerOutputW = 6550.0f;	// ELCON charger specification
-	constexpr float kStartChargeA = 9.0f; 				// 1.0C begining charging amperage
+	constexpr uint16_t kStartChargeA = 9;				// 0.5C charging amperage
 
 } // namespace constants 

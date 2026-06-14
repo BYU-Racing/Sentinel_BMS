@@ -14,8 +14,6 @@
 
 bool core1_separate_stack = true;
 
-#define COMMUNICATE_WITH_CHARGER
-
 // #define BALANCE_MODULES_INDEPENDENTLY
 
 namespace {
@@ -47,13 +45,17 @@ namespace {
 	// charging states
 	enum ChargingState : uint8_t {
 		DISABLED = 0,	// In drive mode OR Charger CAN status msg timeout
+		IDLE,			// Charge enable pin detected 
 		READY,			// Charger CAN status msg recieved
 		CHARGING, 		// Safe to charge
 		COMPLETE, 		// charging completed
-		FAULT			// Fault detected
+		FAULT			// Fault detected send msg to charger to STOP charging
 	};
 
 	ChargingState chargingState = ChargingState::DISABLED;
+
+	// init charge enable pin state
+	bool charge_enabled = false;
 
 	uint8_t encodeAggregateStatus(StatusMode mode) {
 		switch (mode) {
@@ -227,30 +229,30 @@ namespace {
 	}	
 
 	// BMS CAN msg for Elcon charger communication
-	MCP2517Can::Message buildCanChargerControlMessage(float maxChargingVoltageV, float maxChargingCurrentA, bool chargerControl, bool chargerMode) {
+	MCP2517Can::Message buildCanChargerControlMessage(uint16_t maxChargingVoltageV, uint16_t maxChargingCurrentA, bool chargerControl, bool chargerMode) {
 		MCP2517Can::Message message;
 		message.id = MCP2517Can::CanMsgId::ChargerControl;
 		message.length = 8;
 		message.extended = true;
 
 		// convert voltage to decivolts
-		uint16_t rawMaxChargingVoltageV = static_cast<uint16_t>(maxChargingVoltageV * 10.0f);
+		uint16_t rawMaxChargingVoltageV = static_cast<uint16_t>(maxChargingVoltageV * 10);
 		// convert amperage to deciamps
-		uint16_t rawMaxChargingCurrentA = static_cast<uint16_t>(maxChargingCurrentA * 10.0f);
+		uint16_t rawMaxChargingCurrentA = static_cast<uint16_t>(maxChargingCurrentA * 10);
 
 		// Max allowable charging terminal
-		message.data[0] = (rawMaxChargingVoltageV >> 8) & 0xFF; // high byte
-		message.data[1] = rawMaxChargingVoltageV & 0xFF; 		// low byte
+		message.data[0] = rawMaxChargingVoltageV >> 8; 		// high byte
+		message.data[1] = rawMaxChargingVoltageV & 0xFF; 	// low byte
 
 		// Max allowable charging current
-		message.data[2] = (rawMaxChargingCurrentA >> 8) & 0xFF; // high byte
-		message.data[3] = rawMaxChargingCurrentA & 0xFF;		// low byte
+		message.data[2] = rawMaxChargingCurrentA >> 8; 		// high byte
+		message.data[3] = rawMaxChargingCurrentA & 0xFF;	// low byte
 
 		// Control
-		message.data[4] = chargerControl ? 0x00 : 0x01;
+		message.data[4] = chargerControl;
 
 		// Working status control
-		message.data[5] = chargerMode ? 0x00 : 0x01;
+		message.data[5] = chargerMode;
 
 		// reserved
 		message.data[6] = 0x00;
@@ -269,7 +271,7 @@ namespace {
 		pinMode(CAN0_INT, INPUT_PULLUP);
 		digitalWrite(CAN0_CS, HIGH);
 	}
-} // namespace
+} // namespace	
 
 void setup() {
 	mutex_init(&gBmsDataMutex);
@@ -299,7 +301,15 @@ void loop() {
 		lastPollMs = now;
 		SystemStatuses statusesForOutput{};
 
-		// TODO read drive and charge enable pin - Not sure how this effects status yet
+		// update charge enable pin
+		uint16_t chargePinValue = analogRead(CHARGE_ENABLE_SENSE);
+
+		if (chargePinValue > constants::kChargerPinConsideredHigh) {
+			charge_enabled = true;
+		}
+		else {
+			charge_enabled = false;
+		}
 
 		mutex_enter_blocking(&gBmsDataMutex);
 
@@ -363,7 +373,7 @@ void loop1() {
 					// means something has gone amiss. We don't care about the
 					// specifics, so we just call it a fault.
 					chargingState = ChargingState::FAULT;
-				} else if (chargingState == ChargingState::DISABLED) {
+				} else if (chargingState == ChargingState::IDLE) {
 					// update charger mode
 					chargingState = ChargingState::READY;
 				}
@@ -375,6 +385,16 @@ void loop1() {
 			default:
 				break;
 		}
+	}
+
+	// if charge was enabled by pin, and the pin changes, then set charging status to fault to send msg to shut off charger
+	if (!charge_enabled &&
+		(chargingState == ChargingState::IDLE ||
+		 chargingState == ChargingState::READY ||
+		 chargingState == ChargingState::CHARGING ||
+		 chargingState == ChargingState::COMPLETE))
+	{
+		chargingState = ChargingState::FAULT;
 	}
 
 	// if charger status CAN msg was not recieved for 2 seconds, turn off charging mode
@@ -389,7 +409,7 @@ void loop1() {
 		SystemStatuses statusesSnapshot{};
 		ReadBMS::PollData pollSnapshot{};
 
-		// get the lastest SOC readings
+		// get the lastest SOC and BMS status readings
 		mutex_enter_blocking(&gBmsDataMutex);
 		statusesSnapshot = gSystemStatuses;
 		soc = readBms.pollSOC();
@@ -397,9 +417,18 @@ void loop1() {
 		mutex_exit(&gBmsDataMutex);
 
 		switch (static_cast<ChargingState>(chargingState)) {
+			case ChargingState::DISABLED:
+				// update charge mode from charge enable pin
+				if (charge_enabled) {
+					chargingState = ChargingState::IDLE;
+				}
+				break;
 			case ChargingState::READY:
-				// check if safe to charge by checking voltages and temps
-				if ((soc.maxCellMv < constants::kCellVoltageGoodMaxMv) && (statusesSnapshot.temp == StatusMode::GOOD)) {
+				// check if safe to charge by checking voltages and temps and we should test overall BMS status too for redundancy
+				if ((soc.maxCellMv < constants::kCellVoltageGoodMaxMv) && 
+					(statusesSnapshot.temp == StatusMode::GOOD) && 
+					(statusesSnapshot.BMS == StatusMode::GOOD)) 
+				{
 					chargingState = ChargingState::CHARGING;
 				}
 				break;
@@ -412,21 +441,35 @@ void loop1() {
 				if (encodeHighestTempC(pollSnapshot) >= constants::kTempChargingFaultC) {
 					chargingState = ChargingState::FAULT;
 				}
+				// for safety, redundant check of BMS status
+				if (statusesSnapshot.BMS != StatusMode::GOOD) {
+					chargingState = ChargingState::FAULT;
+				}
+				break;
+			case ChargingState::FAULT: 
+			{
+				// send msg to charger to STOP charging
+				const MCP2517Can::Message fault_msg = buildCanChargerControlMessage(
+					constants::kVoltageChargerMaxPackV,
+					0,
+					MCP2517Can::ChargerControl::ChargerClose,
+					MCP2517Can::ChargingMode::ChargingMode);
+
+				can0.send(fault_msg);
+			}
 				break;
 			default:
 				break;
 		}
 	}
 
-	// send charging CAN msg
-	// Only send this msg if charging state is CHARGING or COMPLETE
-	#ifdef COMMUNICATE_WITH_CHARGER
+	// send charging CAN msg at a rate of once per second per charger datasheet
 	if (gCan0Ready &&
 		(now - lastChargerControlMessageMs >= constants::kCanChargerControlIntervalMs) &&
-		(chargingState == ChargingState::CHARGING || chargingState == ChargingState::COMPLETE || chargingState == ChargingState::FAULT)) {
+		(chargingState == ChargingState::CHARGING || chargingState == ChargingState::COMPLETE)) {
 		lastChargerControlMessageMs = now;
 
-		float targetAmperage = 0.0f;
+		uint16_t targetAmperage = 0;
 		bool chargerControl = MCP2517Can::ChargerControl::ChargerClose;
 		// should always be in charging mode
 		bool chargerMode = MCP2517Can::ChargingMode::ChargingMode;	
@@ -437,12 +480,8 @@ void loop1() {
 				chargerControl = MCP2517Can::ChargerControl::ChargerStart;
 				break;
 			case ChargingState::COMPLETE:
-				targetAmperage = 0.0f;
-				chargerControl = MCP2517Can::ChargerControl::ChargerClose;
-				break;
-			case ChargingState::FAULT:
 				// send msg to charger to STOP charging
-				targetAmperage = 0.0f;
+				targetAmperage = 0;
 				chargerControl = MCP2517Can::ChargerControl::ChargerClose;
 				break;
 			default:
@@ -459,8 +498,8 @@ void loop1() {
 			Serial.println("Charger control message sent success");
 		}
 	}
-	#endif
 
+	// Update balancing through serial GUI interface
 	while (Serial.available() > 0) {
 		const char ch = static_cast<char>(Serial.read());
 		if (ch == '\r') {
@@ -508,6 +547,8 @@ void loop1() {
 			Serial.println("CHARGING");
 		} else if (chargingState == ChargingState::DISABLED) {
 			Serial.println("CHARGING DISABLED");
+		} else if (chargingState == ChargingState::IDLE) {
+			Serial.println("CHARGING IDLE");
 		} else if (chargingState == ChargingState::READY) {
 			Serial.println("CHARGING READY");
 		} else if (chargingState == ChargingState::COMPLETE) {
@@ -525,6 +566,7 @@ void loop1() {
 		}
 	}
 
+	// send BMS statues and basic information through CAN
 	if (gCan0Ready && (now - lastCanStatusMs >= constants::kCanStatusIntervalMs)) {
 		lastCanStatusMs = now;
 		SystemStatuses statusesSnapshot{};
@@ -547,14 +589,5 @@ void loop1() {
 			Serial.println("CAN0 SOC message sent");
 		}
 
-		// CAN msg debugging
-		Serial.print("SOC: ");
-		Serial.println(soc.minSOC, 3);
-		Serial.print("Min cell voltage: ");
-		Serial.println(soc.minCellMv);
-		Serial.print("Max cell voltage: ");
-		Serial.println(soc.maxCellMv);
-		Serial.print("Highest Temp: ");
-		Serial.println(encodeHighestTempC(pollSnapshot));
 	}
 }
