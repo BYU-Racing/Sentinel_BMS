@@ -37,6 +37,7 @@ namespace {
 	uint32_t lastChargerTimeoutMs = 0;
 	uint32_t lastChargerControlMessageMs = 0;
 	uint32_t lastChargerStatusUpdateMs = 0;
+	uint32_t lastChargerLoggingMs = 0;
 	uint8_t logCycleCount = 0;
 	mutex_t gBmsDataMutex;
 	volatile bool gBmsDataReady = false;
@@ -261,6 +262,23 @@ namespace {
 		return message;
 	}
 
+	// print charger status CAN msg for debugging
+	void printChargerStatus(MCP2517Can::Message statusMsg) {
+		uint16_t outputVoltage = static_cast<uint16_t>(statusMsg.data[0] << 8) | statusMsg.data[1];
+		uint16_t outputCurrent = static_cast<uint16_t>(statusMsg.data[2] << 8) | statusMsg.data[3];
+		uint8_t statusFlags = statusMsg.data[4];
+
+		Serial.print("Charger output voltage: ");
+		Serial.print(static_cast<double>(outputVoltage) / 10.0);
+		Serial.println(" V");
+		Serial.print("Charger output current: ");
+		Serial.print(static_cast<double>(outputCurrent) / 10.0);
+		Serial.println(" A");
+		Serial.print("Charger status flags of 0x");
+		Serial.print(statusFlags, 16);
+		Serial.println();
+	}
+
 	void configureCan0Spi() {
 		SPI.setRX(CAN_SPI_MISO);
 		SPI.setSCK(CAN_SPI_SCLK);
@@ -376,6 +394,11 @@ void loop1() {
 				} else if (chargingState == ChargingState::IDLE) {
 					// update charger mode
 					chargingState = ChargingState::READY;
+				}
+				// print charger status via serial for debugging
+				if ((now - lastChargerLoggingMs >= 1000) && Serial.available()) {
+					lastChargerLoggingMs = now;
+					printChargerStatus(rmsg);
 				}
 				break;
 			case MCP2517Can::CanMsgId::MotorControlCommand:
