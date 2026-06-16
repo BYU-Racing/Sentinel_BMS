@@ -439,6 +439,11 @@ void loop1() {
 		pollSnapshot = readBms.data();
 		mutex_exit(&gBmsDataMutex);
 
+		// if BMS has faulted the charger should turn off
+		if (statusesSnapshot.BMS != StatusMode::GOOD) {
+			chargingState = ChargingState::FAULT;
+		}
+
 		switch (static_cast<ChargingState>(chargingState)) {
 			case ChargingState::DISABLED:
 				// update charge mode from charge enable pin

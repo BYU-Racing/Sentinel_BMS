@@ -24,7 +24,7 @@ namespace constants {
 	// interval BMS sends data via Serial
 	constexpr uint32_t kLogIntervalMs = 2000;
 	// interval BMS scans modules
-	constexpr uint32_t kModuleScanIntervalMs = 1000;
+	constexpr uint32_t kModuleScanIntervalMs = 50;
 
 	constexpr uint32_t kCanBitRate = 250000;
 	constexpr uint32_t kCanStatusIntervalMs = 1000;				// Rate at which data CAN status information is sent
@@ -50,7 +50,7 @@ namespace constants {
 
 	constexpr float kTempWarningMinC = 5.0f;
 	constexpr float kTempGoodMaxC = 50.0f;
-	constexpr uint8_t kTempChargingFaultC = 55;			// stop charging if max cell temp reaches this value
+	constexpr uint8_t kTempChargingFaultC = 60;			// stop charging if max cell temp reaches this value
 	constexpr float kTempWarningMaxC = 60.0f;			// if cells reach 60 C then the BMS should error
 	constexpr float kTempExhaustedMaxC = 70.0f;			// the cells should not go any higher than this per the datasheet
 	constexpr float kBoardThermistorFaultMinC = 70.0f;
