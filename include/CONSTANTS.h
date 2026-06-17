@@ -24,7 +24,7 @@ namespace constants {
 	// interval BMS sends data via Serial
 	constexpr uint32_t kLogIntervalMs = 2000;
 	// interval BMS scans modules
-	constexpr uint32_t kModuleScanIntervalMs = 50;
+	constexpr uint32_t kModuleScanIntervalMs = 100;
 
 	constexpr uint32_t kCanBitRate = 250000;
 	constexpr uint32_t kCanStatusIntervalMs = 1000;				// Rate at which data CAN status information is sent
