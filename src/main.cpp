@@ -412,12 +412,6 @@ void loop1() {
 		pollSnapshot = readBms.data();
 		mutex_exit(&gBmsDataMutex);
 
-		// if BMS has faulted the charger should turn off
-		if (statusesSnapshot.BMS != StatusMode::GOOD) {
-			chargingState = ChargingState::FAULT;
-			Serial.println("Charger fault from BMS fault 449");
-		}
-
 		switch (static_cast<ChargingState>(chargingState)) {
 			case ChargingState::READY:
 				// check if safe to charge by checking voltages and temps and we should test overall BMS status too for redundancy
