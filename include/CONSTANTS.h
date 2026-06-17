@@ -24,7 +24,7 @@ namespace constants {
 	// interval BMS sends data via Serial
 	constexpr uint32_t kLogIntervalMs = 2000;
 	// interval BMS scans modules
-	constexpr uint32_t kModuleScanIntervalMs = 100;
+	constexpr uint32_t kModuleScanIntervalMs = 500;
 
 	constexpr uint32_t kCanBitRate = 250000;
 	constexpr uint32_t kCanStatusIntervalMs = 1000;				// Rate at which data CAN status information is sent
@@ -62,6 +62,6 @@ namespace constants {
 	constexpr uint16_t kChargerPinConsideredHigh = 620; // Charger analog read pin will read 1 V when high, thus 4096/3.3 V = 1241, and we add space for uncertainty and noise
 	constexpr uint16_t kVoltageChargerMaxPackV = 445; 	// Charger will shutoff if limit is over-reached and BMS or wiring fails; this parameter is sent to the charger via CAN in charger mode
 	constexpr float kMaxChargerPowerOutputW = 6550.0f;	// ELCON charger specification
-	constexpr uint16_t kStartChargeA = 9;				// 0.5C charging amperage
+	constexpr uint16_t kStartChargeA = 1;				// 0.5C charging amperage
 
 } // namespace constants 

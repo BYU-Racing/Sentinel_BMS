@@ -115,8 +115,7 @@ inline StatusMode evaluateTempStatus(const ModuleReadings& module) {
 		const float tempC = module.thermistorTempsC[i];
 		StatusMode thermistorStatus = StatusMode::BAD_DATA;
 
-		// FIXME Hacks to IGNORE DISCONNECTED THEMISTORS!!!!
-		if (!isnan(tempC)) {
+		if (!isnan(tempC) && tempC >= constants::kTempWarningMinC) {
 			++validThermistorCount;
 
 			if (tempC > constants::kTempExhaustedMaxC) {

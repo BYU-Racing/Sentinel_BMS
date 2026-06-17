@@ -55,9 +55,6 @@ namespace {
 
 	ChargingState chargingState = ChargingState::DISABLED;
 
-	// init charge enable pin state
-	bool charge_enabled = false;
-
 	uint8_t encodeAggregateStatus(StatusMode mode) {
 		switch (mode) {
 			case StatusMode::GOOD:
@@ -252,13 +249,6 @@ namespace {
 		// Control
 		message.data[4] = chargerControl;
 
-		// Working status control
-		message.data[5] = chargerMode;
-
-		// reserved
-		// message.data[6] = 0x00;
-		// message.data[7] = 0x00;
-
 		return message;
 	}
 
@@ -319,21 +309,6 @@ void loop() {
 	if (now - lastPollMs >= constants::kPollIntervalMs) {
 		lastPollMs = now;
 		SystemStatuses statusesForOutput{};
-
-		// update charge enable pin
-		// uint16_t chargePinValue = analogRead(CHARGE_ENABLE_SENSE);
-
-		// if (chargePinValue > constants::kChargerPinConsideredHigh) {
-		// 	charge_enabled = true;
-		// }
-		// else {
-		// 	charge_enabled = false;
-		// }
-
-		// // shutdown charger if charging is complete
-		// if (chargingState == ChargingState::COMPLETE) {
-		// 	charge_enabled = false;
-		// }
 
 		mutex_enter_blocking(&gBmsDataMutex);
 
@@ -401,9 +376,7 @@ void loop1() {
 					// chargingState = ChargingState::FAULT;
 					Serial.println("Charger flag fault: 0x");
 					Serial.print(rmsg.data[4], 16);
-				}
-				
-				if (chargingState == ChargingState::DISABLED) {
+				} else if (chargingState == ChargingState::DISABLED) {
 					// update charger mode
 					chargingState = ChargingState::READY;
 				}
@@ -586,13 +559,13 @@ void loop1() {
 		}
 		Serial.println();
 		
-		// ReadBMS::logBalancingState(bmsSnapshot, Serial);
+		ReadBMS::logBalancingState(bmsSnapshot, Serial);
 
-		// ReadBMS::logConnectedModules(bmsSnapshot, Serial);
-		// if (logSiliconIds) {
-		// 	ReadBMS::logModuleSiliconIds(bmsSnapshot, Serial);
-		// 	logCycleCount = 0;
-		// }
+		ReadBMS::logConnectedModules(bmsSnapshot, Serial);
+		if (logSiliconIds) {
+			ReadBMS::logModuleSiliconIds(bmsSnapshot, Serial);
+			logCycleCount = 0;
+		}
 	}
 
 	// send BMS statues and basic information through CAN
