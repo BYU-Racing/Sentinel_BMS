@@ -326,11 +326,7 @@ void loop() {
 		mutex_exit(&gBmsDataMutex);
 
 		// Set BMS_STATUS_OUTPUT, pull low if everything is good
-		// jbox.setStatus(statusesForOutput.BMS);
-
-		// TODO Test Shutdown pin
-		// This should simulate a fault
-		digitalWrite(BMS_STATUS_OUTPUT, LOW);
+		// jbox.setStatus(statusesForOutput.BMS
 
 		// Render the current statuses to the LED strip
 		ledControl.update(statusesForOutput, balancingOn);
