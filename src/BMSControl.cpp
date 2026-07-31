@@ -1,4 +1,5 @@
 #include "BMSControl.h"
+#include "SOCLookUpTable.h"
 
 const SPISettings ReadBMS::kBmsSpiSettings(1000000, MSBFIRST, SPI_MODE0);
 
@@ -77,9 +78,31 @@ void ReadBMS::updateBalancing(bool enabled) {
 		return;
 	}
 
+	// update global pack min cell voltage
+	uint16_t lowestPackCellMv = UINT16_MAX;
 	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
 		ModuleReadings& module = pollData_.modules[moduleIndex];
-		module.balanceMask = balanceMaskForModule(module, module.balanceMask);
+
+		// pass disconnected cells for now, but we need to look into this 
+		if (!module.connected || !module.cellDataValid) {
+			continue;
+		}
+
+		for (uint16_t cellMv : module.cellVoltages) {
+			// pass invalid cells for now, but we need to look this later
+			if (cellMv == adbms6830::BMSInterface::kInvalidCellValue) {
+				continue;
+			}
+			
+			if (cellMv < lowestPackCellMv) {
+				lowestPackCellMv = cellMv;
+			}
+		}
+	}
+
+	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
+		ModuleReadings& module = pollData_.modules[moduleIndex];
+		module.balanceMask = balanceMaskForModule(module, module.balanceMask, lowestPackCellMv);
 	}
 
 	for (std::size_t moduleIndex = 0; moduleIndex < kModuleCount; ++moduleIndex) {
@@ -311,7 +334,7 @@ void ReadBMS::logModuleSiliconIds(const LogSnapshot& snapshot, Stream& stream) {
 	stream.println();
 }
 
-uint16_t ReadBMS::balanceMaskForModule(const ModuleReadings& module, uint16_t currentMask) {
+uint16_t ReadBMS::balanceMaskForModule(const ModuleReadings& module, uint16_t currentMask, uint16_t lowestPackCellMv) {
 	if (!module.connected || !module.cellDataValid) {
 		return 0;
 	}
@@ -319,7 +342,11 @@ uint16_t ReadBMS::balanceMaskForModule(const ModuleReadings& module, uint16_t cu
 		return 0;
 	}
 
-	uint16_t minCellMv = UINT16_MAX;
+	// grab the min cell voltage for the module, this is the balance target
+	// thus if the pack min cell voltage is inserted here instead, then each
+	// module will balance globally to each other
+	#ifdef BALANCE_MODULES_INDEPENDENTLY
+	uint16_t targetCellMv = UINT16_MAX;
 	for (uint16_t cellMv : module.cellVoltages) {
 		if (cellMv == adbms6830::BMSInterface::kInvalidCellValue) {
 			return 0;
@@ -335,11 +362,19 @@ uint16_t ReadBMS::balanceMaskForModule(const ModuleReadings& module, uint16_t cu
 	if (minCellMv == UINT16_MAX) {
 		return 0;
 	}
+	#else
+	// Balance modules to the global min cell voltage
+	uint16_t targetCellMv = lowestPackCellMv;
+	if (targetCellMv == UINT16_MAX) {
+		return 0;
+	}
+	#endif
 
 	uint16_t desiredMask = 0;
 	for (std::size_t cellIndex = 0; cellIndex < module.cellVoltages.size(); ++cellIndex) {
 		const uint16_t cellMv = module.cellVoltages[cellIndex];
-		const uint16_t deltaMv = static_cast<uint16_t>(cellMv - minCellMv);
+		// calculate delta voltage from the target cell voltage pulled previously
+		const uint16_t deltaMv = static_cast<uint16_t>(cellMv - targetCellMv);
 		const uint16_t cellBit = static_cast<uint16_t>(1u << cellIndex);
 		const bool currentlyBalancing = (currentMask & cellBit) != 0u;
 		if (currentlyBalancing) {
@@ -690,4 +725,46 @@ void ReadBMS::copyModuleReadings(ModuleReadings& destination,
 	destination.balanceMask = source.balanceMask;
 	destination.cellVoltages = source.cellVoltages;
 	destination.thermistorTempsC = source.thermistorTempsC;
+}
+
+// Update State of charge struct data 
+ReadBMS::StateOfCharge ReadBMS::pollSOC() {
+	uint16_t lowestCellMv = UINT16_MAX;
+	uint16_t highestCellMv = 0;
+	float minStateOfCharge = 0.0f;
+	float maxStateOfCharge = 0.0f;
+
+	// get lastest module readings
+	updatePollData();
+
+	for (const ReadBMS::ModuleReadings &module : pollData_.modules)
+	{
+		if (!module.connected || !module.cellDataValid) {
+			continue;
+		}
+
+		for (uint16_t cellMv : module.cellVoltages) {
+			if (cellMv == adbms6830::BMSInterface::kInvalidCellValue) {
+				continue;
+			}
+
+			if (cellMv < lowestCellMv) {
+				lowestCellMv = cellMv;
+			}
+
+			if (cellMv > highestCellMv) {
+				highestCellMv = cellMv;
+			}
+		}
+	}
+
+	minStateOfCharge = lookUpSOC(lowestCellMv);
+	maxStateOfCharge = lookUpSOC(highestCellMv);
+
+	StateOfCharge soc{};
+	soc.minSOC = minStateOfCharge;
+	soc.maxSOC = maxStateOfCharge;
+	soc.minCellMv = lowestCellMv;
+	soc.maxCellMv = highestCellMv;
+	return soc;
 }

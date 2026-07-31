@@ -32,12 +32,21 @@ public:
 		std::array<adbms6830::BMSInterface::SiliconIdReadback, constants::kModuleCount> moduleSiliconIds{};
 	};
 
+	// To be used for charging logic and CAN msg data sent to the dashboard
+	struct StateOfCharge {
+		float minSOC = 0.0f;
+		float maxSOC = 0.0f;
+		uint16_t minCellMv = 0;
+		uint16_t maxCellMv = 0;
+	};
+
 	ReadBMS();
 
 	void begin();
 	void pollBMS();
 	void updateBalancing(bool enabled);
 	const PollData& data() const;
+	StateOfCharge pollSOC(); // to pull SOC data for charging
 	LogSnapshot captureLogSnapshot() const;
 	static void logBalancingState(const LogSnapshot& snapshot, Stream& stream);
 	static void logConnectedModules(const LogSnapshot& snapshot, Stream& stream);
@@ -82,7 +91,7 @@ private:
 	static AggregateStats cellStatsForModule(const ModuleReadings& module);
 	static AggregateStats thermistorStatsForModule(const ModuleReadings& module);
 	static bool boardThermistorFaulted(const ModuleReadings& module);
-	static uint16_t balanceMaskForModule(const ModuleReadings& module, uint16_t currentMask);
+	static uint16_t balanceMaskForModule(const ModuleReadings &module, uint16_t currentMask, uint16_t lowestPackCellMv);
 	static void printSiliconId(Stream& stream, const adbms6830::BMSInterface::SiliconIdReadback& siliconId);
 	void applyBalanceMask(adbms6830::BMSInterface& bmsInterface,
 	                      std::array<uint16_t, kModuleCount>& appliedMasks,
@@ -114,6 +123,8 @@ private:
 	void copyModuleReadings(ModuleReadings& destination,
 	                        const adbms6830::BMSInterface::ModuleData& source,
 	                        bool connected) const;
+
+	float lookUpSOC(uint16_t cellMv);
 
 	static const SPISettings kBmsSpiSettings;
 

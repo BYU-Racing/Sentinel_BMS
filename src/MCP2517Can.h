@@ -24,6 +24,26 @@ public:
     Osc40MHzDiv2,
   };
 
+  enum CanMsgId : uint32_t {
+    MotorControlCommand = 0x0C0,  // Motor control command, BMS will switch to drive ready mode when this msg is recieved
+
+    BmsStatus = 0x070,           // BMS status message
+    StateOfCharge = 0x072,       // BMS state of charge 
+
+    ChargerControl = 0x1806E5F4, // ELCON CAN 3865 charger control message id
+    ChargerStatus = 0x18FF50E5,  // ELCON CAN 3865 charger status broadcast message
+  };
+
+  enum ChargerControl : bool {
+    ChargerStart = 0,
+    ChargerClose = 1,
+  }; 
+
+  enum ChargingMode : bool {
+    ChargingMode = 0,
+    HeatingMode = 1,
+  };
+
   struct Message {
     uint32_t id = 0;
     bool extended = false;
