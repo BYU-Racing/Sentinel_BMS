@@ -373,7 +373,7 @@ void loop1() {
 					// According to the elcon spec, if any of the flags are set it
 					// means something has gone amiss. We don't care about the
 					// specifics, so we just call it a fault.
-					// chargingState = ChargingState::FAULT;
+					chargingState = ChargingState::FAULT;
 					Serial.println("Charger flag fault: 0x");
 					Serial.print(rmsg.data[4], 16);
 				} else if (chargingState == ChargingState::DISABLED) {
